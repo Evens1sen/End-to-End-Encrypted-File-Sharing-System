@@ -7,6 +7,7 @@ package client
 
 import (
 	"encoding/json"
+	"unsafe"
 
 	userlib "github.com/cs161-staff/project2-userlib"
 	"github.com/google/uuid"
@@ -26,6 +27,8 @@ import (
 	_ "strconv"
 )
 
+const keysize = 16
+
 // This serves two purposes: it shows you a few useful primitives,
 // and suppresses warnings for imports not being used. It can be
 // safely deleted!
@@ -40,7 +43,7 @@ func someUsefulThings() {
 
 	// Creates a UUID deterministically, from a sequence of bytes.
 	hash := userlib.Hash([]byte("user-structs/alice"))
-	deterministicUUID, err := uuid.FromBytes(hash[:16])
+	deterministicUUID, err := uuid.FromBytes(hash[:keysize])
 	if err != nil {
 		// Normally, we would `return err` here. But, since this function doesn't return anything,
 		// we can just panic to terminate execution. ALWAYS, ALWAYS, ALWAYS check for errors! Your
@@ -76,7 +79,7 @@ func someUsefulThings() {
 	// Tip: generate a new key everywhere you possibly can! It's easier to generate new keys on the fly
 	// instead of trying to think about all of the ways a key reuse attack could be performed. It's also easier to
 	// store one key and derive multiple keys from that one key, rather than
-	originalKey := userlib.RandomBytes(16)
+	originalKey := userlib.RandomBytes(keysize)
 	derivedKey, err := userlib.HashKDF(originalKey, []byte("mac-key"))
 	if err != nil {
 		panic(err)
@@ -100,7 +103,10 @@ func someUsefulThings() {
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
 type User struct {
-	Username string
+	Username      string
+	Password      string
+	UserPKEDecKey userlib.PKEDecKey
+	UserDSSignKey userlib.DSSignKey
 
 	// You can add other attributes here if you want! But note that in order for attributes to
 	// be included when this struct is serialized to/from JSON, they must be capitalized.
@@ -110,21 +116,216 @@ type User struct {
 	// begins with a lowercase letter).
 }
 
+type FileMetaData struct {
+	Original           bool
+	FileUUID           userlib.UUID
+	FileKeyPtr         userlib.UUID
+	ChildrenKeyPtrList []userlib.UUID
+	SourceKey          []byte
+}
+
+type FileKey struct {
+	EncKey []byte
+}
+
+type File struct {
+	FileBlockCnt int
+	Salt         []byte
+}
+
+type FileBlock struct {
+	Content []byte
+}
+
+type Invitation struct {
+	Sender     string
+	Receiver   string
+	FileUUID   userlib.UUID
+	FileKeyPtr userlib.UUID
+	SourceKey  []byte
+}
+
+type DTO struct {
+	Encrypted []byte
+	MAC       []byte
+}
+
+func Byte2Str(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
+
 // NOTE: The following methods have toy (insecure!) implementations.
+
+// source string -> UUID, rememeber to check err after calling it
+func GetUUID(source string) (UUID userlib.UUID, err error) {
+	UUID, err = uuid.FromBytes(userlib.Hash([]byte(source))[:keysize])
+	if err != nil {
+		return UUID, err
+	}
+	return UUID, nil
+}
+
+// wrap struct into encrypted DTO and store into datastore, rememeber to check err after calling it
+func DTOWrappingandStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo string) (err error) {
+	var dto DTO
+	var vjson []byte
+	//mashal and encrypt
+	vjson, err = json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	dto.Encrypted = userlib.SymEnc(EK, userlib.RandomBytes(keysize), vjson)
+	// MAC
+	var MK []byte
+	MK, err = userlib.HashKDF(EK, []byte(macInfo))
+	if err != nil {
+		return err
+	}
+	dto.MAC, err = userlib.HMACEval(MK[:keysize], dto.Encrypted)
+	if err != nil {
+		return err
+	}
+	// store dto into datastore
+	var dtojson []byte
+	dtojson, err = json.Marshal(dto)
+	if err != nil {
+		return err
+	}
+	userlib.DatastoreSet(UUID, dtojson)
+	return nil
+}
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdata.Username = username
+	userdata.Password = Byte2Str(userlib.Hash([]byte(password + username)))
+	// RSA key management
+	var RSApk userlib.PublicKeyType
+	var RSAsk userlib.PrivateKeyType
+	RSApk, RSAsk, err = userlib.PKEKeyGen()
+	if err != nil {
+		return nil, err
+	}
+	err = userlib.KeystoreSet(username+"public_enc", RSApk)
+	if err != nil {
+		return nil, err
+	}
+	userdata.UserPKEDecKey = RSAsk
+	// DS key management
+	var DSpk userlib.DSVerifyKey
+	var DSsk userlib.DSSignKey
+	DSsk, DSpk, err = userlib.DSKeyGen()
+	if err != nil {
+		return nil, err
+	}
+	err = userlib.KeystoreSet(username+"digital_sig", DSpk)
+	if err != nil {
+		return nil, err
+	}
+	userdata.UserDSSignKey = DSsk
+	// dto struct initialization
+	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
+	var UUID userlib.UUID
+	UUID, err = GetUUID(username)
+	if err != nil {
+		return nil, err
+	}
+	err = DTOWrappingandStore(userdata, EK, UUID, "mac_user")
+	if err != nil {
+		return nil, err
+	}
+	// return result
 	return &userdata, nil
 }
 
 func GetUser(username string, password string) (userdataptr *User, err error) {
+	// get dtojson
+	var UUID userlib.UUID
+	UUID, err = GetUUID(username)
+	if err != nil {
+		return nil, err
+	}
+	dtojson, ok := userlib.DatastoreGet(UUID)
+	if !ok {
+		return nil, errors.New("No corresponding user found.")
+	}
+	// unmarshal dtojson
+	var dto DTO
+	err = json.Unmarshal(dtojson, &dto)
+	if err != nil {
+		return nil, err
+	}
+	// get MK and EK
+	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
+	var MK []byte
+	MK, err = userlib.HashKDF(EK, []byte("MAC"))
+	if err != nil {
+		return nil, err
+	}
+	// verify MAC
+	var MAC []byte
+	MAC, err = userlib.HMACEval(MK[:keysize], dto.Encrypted)
+	if err != nil {
+		return nil, err
+	}
+	equal := userlib.HMACEqual(MAC, dto.MAC)
+	if !equal {
+		return nil, errors.New("User struct is tampered.")
+	}
+	// decrypt and get userjson
+	userjson := userlib.SymDec(EK, dto.Encrypted)
+	// get user struct
 	var userdata User
+	err = json.Unmarshal(userjson, &userdata)
+	if err != nil {
+		return nil, err
+	}
 	userdataptr = &userdata
 	return userdataptr, nil
 }
 
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
+	// check existence of file metadata
+	var metaUUID userlib.UUID
+	metaUUID, err = GetUUID(userdata.Username + filename)
+	if err != nil {
+		return err
+	}
+	metajson, ok := userlib.DatastoreGet(metaUUID)
+	if !ok {
+		// create new file process: 1. FileKey 2. File 3. MetaData 4.FileBlock
+		SourceKey := userlib.RandomBytes(keysize)
+		// 1.create FileKey and store
+		fileKey := FileKey{userlib.RandomBytes(keysize)}
+		fileKeyEK, err := userlib.HashKDF(SourceKey, []byte("encrypt_file_key"))
+		if err != nil {
+			return err
+		}
+		var filekeyUUID userlib.UUID
+		filekeyUUID, err = GetUUID(userdata.Username + userdata.Username + filename + "key")
+		if err != nil {
+			return err
+		}
+		err = DTOWrappingandStore(fileKey, fileKeyEK, filekeyUUID, "mac_file_key")
+		if err != nil {
+			return err
+		}
+		// 2.create File and store
+		file := File{1, userlib.RandomBytes(keysize)}
+		var fileUUID userlib.UUID
+		fileUUID, err = GetUUID(userdata.Username + filename)
+		if err != nil {
+			return err
+		}
+		err = DTOWrappingandStore(file, fileKey.EncKey, fileUUID, "mac_file")
+		if err != nil {
+			return nil
+		}
+		// 3. create MetaData and store
+
+	}
+	// overwrite file
+
 	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
 	if err != nil {
 		return err
