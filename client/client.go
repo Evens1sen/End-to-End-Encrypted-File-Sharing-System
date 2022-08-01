@@ -97,6 +97,7 @@ func someUsefulThings() {
 
 	// Here's an example of string interpolation!
 	_ = fmt.Sprintf("%s_%d", "file", 1)
+	fmt.Println("qx")
 }
 
 // This is the type definition for the User struct.
