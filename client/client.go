@@ -6,9 +6,9 @@ package client
 // may break the autograder!
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"strconv"
-	"unsafe"
 
 	userlib "github.com/cs161-staff/project2-userlib"
 	"github.com/google/uuid"
@@ -154,7 +154,7 @@ type DTO struct {
 }
 
 func byte2Str(b []byte) string {
-	return *(*string)(unsafe.Pointer(&b))
+	return hex.EncodeToString(b)
 }
 
 // source string -> UUID, rememeber to check err after calling it
@@ -167,7 +167,7 @@ func getUUID(source string) (UUID userlib.UUID, err error) {
 }
 
 // wrap struct into encrypted DTO and store into datastore, rememeber to check err after calling it
-func dtoWrappingAndStore(v interface{}, EK []byte, UUIDstr string, macInfo string) (err error) {
+func dtoWrappingAndStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo string) (err error) {
 	var dto DTO
 	var vjson []byte
 
@@ -192,11 +192,6 @@ func dtoWrappingAndStore(v interface{}, EK []byte, UUIDstr string, macInfo strin
 	// store dto into datastore
 	var dtojson []byte
 	dtojson, err = json.Marshal(dto)
-	if err != nil {
-		return err
-	}
-	var UUID userlib.UUID
-	UUID, err = getUUID(UUIDstr)
 	if err != nil {
 		return err
 	}
@@ -230,6 +225,50 @@ func dtoUnwrap(EK []byte, macInfo string, dtojson []byte, vptr interface{}) (err
 	// decrypt and get userjson
 	structjson := userlib.SymDec(EK, dto.Encrypted)
 	err = json.Unmarshal(structjson, vptr)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func structWrapAndStoreWithHashKDF(v interface{}, sourceKey []byte, encInfo string, macInfo string, uuidstr string) (UUID userlib.UUID, err error) {
+	EK, err := userlib.HashKDF(sourceKey, []byte(encInfo))
+	if err != nil {
+		return UUID, err
+	}
+	UUID, err = getUUID(uuidstr)
+	if err != nil {
+		return UUID, err
+	}
+	err = dtoWrappingAndStore(v, EK, UUID, macInfo)
+	if err != nil {
+		return UUID, err
+	}
+	return UUID, nil
+}
+func (userdata *User) getMetaDataAndKeyFromJSON(dtojson []byte, fileMetaData *FileMetaData, fileKey *FileKey) (err error) {
+	// step 1:get file metadata
+	var metaDataEK []byte
+	metaDataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
+	if err != nil {
+		return err
+	}
+	err = dtoUnwrap(metaDataEK, "mac_file_meta", dtojson, fileMetaData)
+	if err != nil {
+		return err
+	}
+	// step 2:get file key
+	var ok bool
+	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileKeyPtr)
+	if !ok {
+		return errors.New("No corresponding file key found.")
+	}
+	var fileKeyEK []byte
+	fileKeyEK, err = userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
+	if err != nil {
+		return err
+	}
+	err = dtoUnwrap(fileKeyEK, "mac_file_key", dtojson, fileKey)
 	if err != nil {
 		return err
 	}
@@ -270,7 +309,12 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// dto struct initialization
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
 	userdata.UserEK = EK
-	err = dtoWrappingAndStore(userdata, EK, username, "mac_user")
+	var UUID userlib.UUID
+	UUID, err = getUUID(username)
+	if err != nil {
+		return nil, err
+	}
+	err = dtoWrappingAndStore(userdata, EK, UUID, "mac_user")
 	if err != nil {
 		return nil, err
 	}
@@ -311,19 +355,11 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	dtojson, ok := userlib.DatastoreGet(metaUUID)
 	if !ok {
 		// create new file process: 1. FileKey 2. File 3. MetaData 4.FileBlock
-		SourceKey := userlib.RandomBytes(keysize)
+		sourceKey := userlib.RandomBytes(keysize)
 		// 1.create FileKey and store
 		fileKey := FileKey{userlib.RandomBytes(keysize)}
-		fileKeyEK, err := userlib.HashKDF(SourceKey, []byte("encrypt_file_key"))
-		if err != nil {
-			return err
-		}
 		var filekeyUUID userlib.UUID
-		filekeyUUID, err = getUUID(userdata.Username + userdata.Username + filename + "key")
-		if err != nil {
-			return err
-		}
-		err = dtoWrappingAndStore(fileKey, fileKeyEK, userdata.Username+userdata.Username+filename+"key", "mac_file_key")
+		filekeyUUID, err = structWrapAndStoreWithHashKDF(fileKey, sourceKey, "encrypt_file_key", "mac_file_key", userdata.Username+userdata.Username+filename+"key")
 		if err != nil {
 			return err
 		}
@@ -334,60 +370,29 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		if err != nil {
 			return err
 		}
-		err = dtoWrappingAndStore(file, fileKey.EncKey, userdata.Username+filename+file.Salt, "mac_file")
+		err = dtoWrappingAndStore(file, fileKey.EncKey, fileUUID, "mac_file")
 		if err != nil {
 			return err
 		}
 		// 3. create MetaData and store
 		var ChildrenKeyPtrMap map[string]userlib.UUID
 		ChildrenKeyPtrMap = make(map[string]userlib.UUID)
-		metadata := FileMetaData{true, fileUUID, filekeyUUID, ChildrenKeyPtrMap, SourceKey}
-		var metadataEK []byte
-		metadataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
-		if err != nil {
-			return err
-		}
-		err = dtoWrappingAndStore(metadata, metadataEK, userdata.Username+filename, "mac_file_meta")
+		metaData := FileMetaData{true, fileUUID, filekeyUUID, ChildrenKeyPtrMap, sourceKey}
+		_, err = structWrapAndStoreWithHashKDF(metaData, sourceKey, "encrypt_file_meta", "mac_file_meta", userdata.Username+filename)
 		if err != nil {
 			return err
 		}
 		// 4. create FileBlock and store
 		fileBlock := FileBlock{content}
-		var fileBlockEK []byte
-		fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(0)))
+		_, err = structWrapAndStoreWithHashKDF(fileBlock, sourceKey, "encrypt_file_node0", "mac_file_meta0", userdata.Username+filename+"0"+file.Salt)
 		if err != nil {
 			return err
 		}
-		err = dtoWrappingAndStore(fileBlock, fileBlockEK, userdata.Username+filename+"0"+file.Salt, "mac_file_node0")
-		if err != nil {
-			return err
-		}
-
 	}
 	// overwrite file
-	// step 1:get file meta data
-	var metadataEK []byte
-	metadataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
-	if err != nil {
-		return err
-	}
 	var fileMetaData FileMetaData
-	err = dtoUnwrap(metadataEK, "mac_file_meta", dtojson, &fileMetaData)
-	if err != nil {
-		return err
-	}
-	// step 2:get file key
-	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileKeyPtr)
-	if !ok {
-		return errors.New("No corresponding file key found.")
-	}
-	var fileKeyEK []byte
-	fileKeyEK, err = userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
-	if err != nil {
-		return err
-	}
 	var fileKey FileKey
-	err = dtoUnwrap(fileKeyEK, "mac_file_key", dtojson, &fileKey)
+	err = userdata.getMetaDataAndKeyFromJSON(dtojson, &fileMetaData, &fileKey)
 	if err != nil {
 		return err
 	}
@@ -423,15 +428,72 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return err
 	}
 	fileBlock.Content = content
-	// step 5: store into datastore
-	err = dtoWrappingAndStore(fileBlock, fileBlockEK, userdata.Username+filename+file.Salt+"0", "mac_file_node0")
+	// step 5: store file and file block into datastore
+	// file
+	err = dtoWrappingAndStore(file, fileKey.EncKey, fileMetaData.FileUUID, "mac_file")
+	// file block
+	err = dtoWrappingAndStore(fileBlock, fileBlockEK, fileBlockUUID, "mac_file_node0")
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func (userdata *User) AppendToFile(filename string, content []byte) error {
+func (userdata *User) AppendToFile(filename string, content []byte) (err error) {
+	// check existence of file metadata
+	var metaUUID userlib.UUID
+	metaUUID, err = getUUID(userdata.Username + filename)
+	if err != nil {
+		return err
+	}
+	dtojson, ok := userlib.DatastoreGet(metaUUID)
+	if !ok {
+		return errors.New("No corresponding file metadata found.")
+	}
+	// load file
+	var fileMetaData FileMetaData
+	var fileKey FileKey
+	err = userdata.getMetaDataAndKeyFromJSON(dtojson, &fileMetaData, &fileKey)
+	if err != nil {
+		return err
+	}
+	// step 3:get and modify file
+	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileUUID)
+	if !ok {
+		return errors.New("No corresponding file found.")
+	}
+	var file File
+	err = dtoUnwrap(fileKey.EncKey, "mac_file", dtojson, &file)
+	if err != nil {
+		return err
+	}
+	file.FileBlockCnt++
+	// step 4:create new file block
+	var fileBlockUUID userlib.UUID
+	var fileBlockEK []byte
+	var fileBlock FileBlock
+	fileBlockUUID, err = getUUID(userdata.Username + filename + file.Salt + strconv.Itoa(file.FileBlockCnt-1))
+	if err != nil {
+		return err
+	}
+	dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
+	fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(file.FileBlockCnt-1)))
+	if err != nil {
+		return err
+	}
+	err = dtoUnwrap(fileBlockEK, "mac_file_node"+strconv.Itoa(file.FileBlockCnt-1), dtojson, &fileBlock)
+	if err != nil {
+		return err
+	}
+	fileBlock.Content = content
+	// step 5: store file and file block into datastore
+	// file
+	err = dtoWrappingAndStore(file, fileKey.EncKey, fileMetaData.FileUUID, "mac_file")
+	// file block
+	err = dtoWrappingAndStore(fileBlock, fileBlockEK, fileBlockUUID, "mac_file_node"+strconv.Itoa(file.FileBlockCnt-1))
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -447,29 +509,9 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		return nil, errors.New("No corresponding file metadata found.")
 	}
 	// load file
-	// step 1:get file meta data
-	var metadataEK []byte
-	metadataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
-	if err != nil {
-		return nil, err
-	}
 	var fileMetaData FileMetaData
-	err = dtoUnwrap(metadataEK, "mac_file_meta", dtojson, &fileMetaData)
-	if err != nil {
-		return nil, err
-	}
-	// step 2:get file key
-	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileKeyPtr)
-	if !ok {
-		return nil, errors.New("No corresponding file key found.")
-	}
-	var fileKeyEK []byte
-	fileKeyEK, err = userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
-	if err != nil {
-		return nil, err
-	}
 	var fileKey FileKey
-	err = dtoUnwrap(fileKeyEK, "mac_file_key", dtojson, &fileKey)
+	err = userdata.getMetaDataAndKeyFromJSON(dtojson, &fileMetaData, &fileKey)
 	if err != nil {
 		return nil, err
 	}
@@ -594,8 +636,12 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	fileMetaData.FileKeyPtr = invitation.FileKeyPtr
 	fileMetaData.ChildrenKeyPtrMap = nil
 	fileMetaData.SourceKey = invitation.SourceKey
-
-	err = dtoWrappingAndStore(fileMetaData, userdata.UserEK, userdata.Username+filename, "mac_file_meta")
+	var fileMetaDataUUID userlib.UUID
+	fileMetaDataUUID, err = getUUID(userdata.Username + filename)
+	if err != nil {
+		return err
+	}
+	err = dtoWrappingAndStore(fileMetaData, userdata.UserEK, fileMetaDataUUID, "mac_file_meta")
 	return err
 }
 
