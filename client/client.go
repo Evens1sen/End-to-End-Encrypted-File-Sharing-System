@@ -462,7 +462,46 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
-	return nil
+	// Get the invitation information
+	invitationDTOJson, ok := userlib.DatastoreGet(invitationPtr)
+	if !ok {
+		return errors.New("Cannot find invitation")
+	}
+
+	var invitationDTO DTO
+	json.Unmarshal(invitationDTOJson, invitationDTO)
+
+	senderVerifyKey, ok := userlib.KeystoreGet(senderUsername + "digital_sig")
+	if !ok {
+		return errors.New("Cannot find sender's verify key")
+	}
+	err := userlib.DSVerify(senderVerifyKey, invitationDTO.Encrypted, invitationDTO.MAC)
+	if err != nil {
+		return err
+	}
+
+	invitationJson, err := userlib.PKEDec(userdata.UserPKEDecKey, invitationDTO.Encrypted)
+	if err != nil {
+		return err
+	}
+	var invitation Invitation
+	json.Unmarshal(invitationJson, invitation)
+
+	// Create a new file metadata in user's namespace
+	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
+	if err != nil {
+		return err
+	}
+
+	var fileMetaData FileMetaData
+	fileMetaData.Original = false
+	fileMetaData.FileUUID = invitation.FileUUID
+	fileMetaData.FileKeyPtr = invitation.FileKeyPtr
+	fileMetaData.ChildrenKeyPtrMap = nil
+	fileMetaData.SourceKey = invitation.SourceKey
+
+	err = dtoWrappingAndStore(fileMetaData, userdata.UserEK, fileMetaDataUUID, "mac_file_meta")
+	return err
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
