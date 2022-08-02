@@ -600,5 +600,29 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
+	if err != nil {
+		return err
+	}
+	fileMetaDataDTOJson, ok := userlib.DatastoreGet(fileMetaDataUUID)
+	if !ok {
+		return errors.New("Cannot find FileMetaData")
+	}
+
+	metadataEK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
+	if err != nil {
+		return err
+	}
+
+	var fileMetaData FileMetaData
+	err = dtoUnwrap(metadataEK, "mac_file_meta", fileMetaDataDTOJson, &fileMetaData)
+	if err != nil {
+		return err
+	}
+
+	if !fileMetaData.Original {
+		return errors.New("Cannot revoke this file")
+	}
+
 	return nil
 }
