@@ -7,6 +7,7 @@ package client
 
 import (
 	"encoding/json"
+	"strconv"
 	"unsafe"
 
 	userlib "github.com/cs161-staff/project2-userlib"
@@ -106,6 +107,7 @@ func someUsefulThings() {
 type User struct {
 	Username      string
 	Password      string
+	UserEK        []byte
 	UserPKEDecKey userlib.PKEDecKey
 	UserDSSignKey userlib.DSSignKey
 
@@ -118,11 +120,11 @@ type User struct {
 }
 
 type FileMetaData struct {
-	Original           bool
-	FileUUID           userlib.UUID
-	FileKeyPtr         userlib.UUID
-	ChildrenKeyPtrList []userlib.UUID
-	SourceKey          []byte
+	Original          bool
+	FileUUID          userlib.UUID
+	FileKeyPtr        userlib.UUID
+	ChildrenKeyPtrMap map[string]userlib.UUID
+	SourceKey         []byte
 }
 
 type FileKey struct {
@@ -131,7 +133,7 @@ type FileKey struct {
 
 type File struct {
 	FileBlockCnt int
-	Salt         []byte
+	Salt         string
 }
 
 type FileBlock struct {
@@ -196,6 +198,33 @@ func DTOWrappingandStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo st
 	return nil
 }
 
+func DTOunwrap(EK []byte, macInfo string, dtojson []byte) (structjson []byte, err error) {
+	var dto DTO
+	err = json.Unmarshal(dtojson, &dto)
+	if err != nil {
+		return nil, err
+	}
+	// get MK and EK
+	var MK []byte
+	MK, err = userlib.HashKDF(EK, []byte(macInfo))
+	if err != nil {
+		return nil, err
+	}
+	// verify MAC
+	var MAC []byte
+	MAC, err = userlib.HMACEval(MK[:keysize], dto.Encrypted)
+	if err != nil {
+		return nil, err
+	}
+	equal := userlib.HMACEqual(MAC, dto.MAC)
+	if !equal {
+		return nil, errors.New("User struct is tampered.")
+	}
+	// decrypt and get userjson
+	structjson = userlib.SymDec(EK, dto.Encrypted)
+	return structjson, nil
+}
+
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdata.Username = username
@@ -226,6 +255,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	userdata.UserDSSignKey = DSsk
 	// dto struct initialization
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
+	userdata.UserEK = EK
 	var UUID userlib.UUID
 	UUID, err = GetUUID(username)
 	if err != nil {
@@ -250,31 +280,12 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if !ok {
 		return nil, errors.New("No corresponding user found.")
 	}
-	// unmarshal dtojson
-	var dto DTO
-	err = json.Unmarshal(dtojson, &dto)
-	if err != nil {
-		return nil, err
-	}
-	// get MK and EK
+	//get EK and unmarshal dtojson to userjson
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
-	var MK []byte
-	MK, err = userlib.HashKDF(EK, []byte("MAC"))
+	userjson, err := DTOunwrap(EK, "mac_user", dtojson)
 	if err != nil {
 		return nil, err
 	}
-	// verify MAC
-	var MAC []byte
-	MAC, err = userlib.HMACEval(MK[:keysize], dto.Encrypted)
-	if err != nil {
-		return nil, err
-	}
-	equal := userlib.HMACEqual(MAC, dto.MAC)
-	if !equal {
-		return nil, errors.New("User struct is tampered.")
-	}
-	// decrypt and get userjson
-	userjson := userlib.SymDec(EK, dto.Encrypted)
 	// get user struct
 	var userdata User
 	err = json.Unmarshal(userjson, &userdata)
@@ -312,19 +323,53 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 			return err
 		}
 		// 2.create File and store
-		file := File{1, userlib.RandomBytes(keysize)}
+		file := File{1, Byte2Str(userlib.RandomBytes(keysize))}
 		var fileUUID userlib.UUID
-		fileUUID, err = GetUUID(userdata.Username + filename)
+		fileUUID, err = GetUUID(userdata.Username + filename + file.Salt)
 		if err != nil {
 			return err
 		}
 		err = DTOWrappingandStore(file, fileKey.EncKey, fileUUID, "mac_file")
 		if err != nil {
-			return nil
+			return err
 		}
 		// 3. create MetaData and store
+		var ChildrenKeyPtrMap map[string]userlib.UUID
+		ChildrenKeyPtrMap = make(map[string]userlib.UUID)
+		metadata := FileMetaData{true, fileUUID, filekeyUUID, ChildrenKeyPtrMap, SourceKey}
+		var metadataEK []byte
+		metadataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
+		if err != nil {
+			return err
+		}
+		var metadataUUID userlib.UUID
+		metadataUUID, err = GetUUID(userdata.Username + filename)
+		if err != nil {
+			return err
+		}
+		err = DTOWrappingandStore(metadata, metadataEK, metadataUUID, "mac_file_meta")
+		if err != nil {
+			return err
+		}
+		// 4. create FileBlock and store
+		fileBlock := FileBlock{content}
+		var fileBlockEK []byte
+		fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(0)))
+		if err != nil {
+			return err
+		}
+		var fileBlockUUID userlib.UUID
+		fileBlockUUID, err = GetUUID(userdata.Username + filename + "0" + file.Salt)
+		if err != nil {
+			return err
+		}
+		err = DTOWrappingandStore(fileBlock, fileBlockEK, fileBlockUUID, "mac_file_node0")
+		if err != nil {
+			return err
+		}
 
 	}
+	metajson
 	// overwrite file
 
 	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
