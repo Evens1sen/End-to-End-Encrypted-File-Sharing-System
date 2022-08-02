@@ -246,6 +246,7 @@ func structWrapAndStoreWithHashKDF(v interface{}, sourceKey []byte, encInfo stri
 	}
 	return UUID, nil
 }
+
 func (userdata *User) getMetaDataAndKeyFromJSON(dtojson []byte, fileMetaData *FileMetaData, fileKey *FileKey) (err error) {
 	// step 1:get file metadata
 	var metaDataEK []byte
@@ -409,7 +410,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	file.FileBlockCnt = 1
 	// step 4:get and modify file block
 	var fileBlockUUID userlib.UUID
-	fileBlockUUID, err = getUUID(userdata.Username + filename + file.Salt + "0")
+	fileBlockUUID, err = getUUID(fileMetaData.FileUUID.String() + file.Salt + "0")
 	if err != nil {
 		return err
 	}
@@ -472,7 +473,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	var fileBlockUUID userlib.UUID
 	var fileBlockEK []byte
 	var fileBlock FileBlock
-	fileBlockUUID, err = getUUID(userdata.Username + filename + file.Salt + strconv.Itoa(file.FileBlockCnt-1))
+	fileBlockUUID, err = getUUID(fileMetaData.FileUUID.String() + file.Salt + strconv.Itoa(file.FileBlockCnt-1))
 	if err != nil {
 		return err
 	}
@@ -531,7 +532,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	var fileBlockEK []byte
 	var fileBlock FileBlock
 	for i := 0; i < file.FileBlockCnt; i++ {
-		fileBlockUUID, err = getUUID(userdata.Username + filename + file.Salt + strconv.Itoa(i))
+		fileBlockUUID, err = getUUID(string(fileMetaData.FileUUID.String() + file.Salt + strconv.Itoa(i)))
 		if err != nil {
 			return nil, err
 		}
@@ -599,7 +600,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 			return uuid.Nil, err
 		}
 
-		err = dtoWrappingAndStore(fileKey, fileKeyEK, userdata.Username+recipientUsername+filename+"key", "mac_file_key")
+		err = dtoWrappingAndStore(fileKey, fileKeyEK, newFilekeyPtr, "mac_file_key")
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -700,7 +701,91 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	}
 
 	if !fileMetaData.Original {
-		return errors.New("Cannot revoke this file")
+		return errors.New("Cannot revoke the shared file")
+	}
+
+	// Step1: Update the FileKey for users except the revoked user
+	// Optional: Delete the FileMetaData in the revoked user's namespace (Maybe done elsewhere)
+	dtojson, ok := userlib.DatastoreGet(fileMetaData.FileKeyPtr)
+	if !ok {
+		return errors.New("No corresponding file key found.")
+	}
+
+	fileKeyEK, err := userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
+	if err != nil {
+		return err
+	}
+
+	var oldFileKey FileKey
+	err = dtoUnwrap(fileKeyEK, "mac_file_key", dtojson, &oldFileKey)
+	if err != nil {
+		return err
+	}
+
+	newFileKey := FileKey{userlib.RandomBytes(keysize)}
+	for name, fkptr := range fileMetaData.ChildrenKeyPtrMap {
+		if name != recipientUsername {
+			err = dtoWrappingAndStore(newFileKey, fileKeyEK, fkptr, "mac_file_key")
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	// Step2: Re-encrypt the File and generate new File salt
+	newFileSalt := string(userlib.RandomBytes(keysize))
+	fileDTOjson, ok := userlib.DatastoreGet(fileMetaData.FileUUID)
+	if !ok {
+		return errors.New("No corresponding file found.")
+	}
+
+	var file File
+	err = dtoUnwrap(oldFileKey.EncKey, "mac_file", fileDTOjson, &file)
+	if err != nil {
+		return err
+	}
+
+	file.Salt = newFileSalt
+	dtoWrappingAndStore(file, newFileKey.EncKey, fileMetaData.FileUUID, "mac_file")
+
+	// Step3: Re-encrypt all the FileBlocks
+	for i := 0; i < file.FileBlockCnt; i++ {
+		fileBlockUUID, err := getUUID(string(fileMetaData.FileUUID.String() + file.Salt + strconv.Itoa(i)))
+		if err != nil {
+			return err
+		}
+
+		dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
+		if !ok {
+			return errors.New("No corresponding fileBlock found.")
+		}
+
+		fileBlockEK, err := userlib.HashKDF(oldFileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
+		if err != nil {
+			return err
+		}
+
+		var fileBlock FileBlock
+		err = dtoUnwrap(fileBlockEK, "mac_file_node"+strconv.Itoa(i), dtojson, &fileBlock)
+		if err != nil {
+			return err
+		}
+
+		newFileBlockUUID, err := getUUID(string(fileMetaData.FileUUID.String() + newFileSalt + strconv.Itoa(i)))
+		if err != nil {
+			return err
+		}
+
+		newFileBlockEK, err := userlib.HashKDF(newFileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
+		if err != nil {
+			return err
+		}
+
+		userlib.DatastoreDelete(fileBlockUUID)
+		err = dtoWrappingAndStore(fileBlock, newFileBlockEK, newFileBlockUUID, "mac_file_node"+strconv.Itoa(file.FileBlockCnt))
+		if err != nil {
+			return err
+		}
 	}
 
 	return nil
