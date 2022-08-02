@@ -200,6 +200,7 @@ func dtoWrappingAndStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo st
 	return nil
 }
 
+// Fetching dto from datastore, verfiy mac and decrypt it to the origin plainText
 func dtoUnwrap(EK []byte, macInfo string, dtojson []byte) (structjson []byte, err error) {
 	var dto DTO
 	err = json.Unmarshal(dtojson, &dto)
@@ -375,7 +376,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		}
 
 	}
-	metajson
+
 	// overwrite file
 
 	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
@@ -409,7 +410,55 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
 	invitationPtr uuid.UUID, err error) {
-	return
+	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
+	if err != nil {
+		return uuid.Nil, errors.New("You don't have this file")
+	}
+
+	FileMetaDataJson, ok := userlib.DatastoreGet(fileMetaDataUUID)
+	if !ok {
+		return uuid.Nil, err
+	}
+
+	EK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_key"))
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	fileMetaDataJson, err := dtoUnwrap(EK, "mac_file_key", FileMetaDataJson)
+	var fileMetaData FileMetaData
+	err = json.Unmarshal(fileMetaDataJson, fileMetaData)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	var invitation Invitation
+	invitation.Sender = userdata.Username
+	invitation.Receiver = recipientUsername
+	invitation.FileUUID = fileMetaData.FileUUID
+	invitation.FileKeyPtr = fileMetaData.FileKeyPtr
+	invitation.SourceKey = fileMetaData.SourceKey
+
+	invitationJson, err := json.Marshal(invitation)
+	invitationUUID, err := getUUID(invitation.Sender + invitation.Receiver + filename)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	receiverSk, ok := userlib.KeystoreGet(recipientUsername + "public_enc")
+	if !ok {
+		return uuid.Nil, err
+	}
+
+	var invitationDTO DTO
+	invitationDTO.Encrypted, err = userlib.PKEEnc(receiverSk, invitationJson)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	invitationDTO.MAC, err = userlib.DSSign(userdata.UserDSSignKey, invitationDTO.Encrypted)
+	invitationDTOJson, err := json.Marshal(invitationDTO)
+	userlib.DatastoreSet(invitationUUID, invitationDTOJson)
+	return invitationUUID, err
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
