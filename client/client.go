@@ -104,19 +104,20 @@ func someUsefulThings() {
 // This is the type definition for the User struct.
 // A Go struct is like a Python or Java class - it can have attributes
 // (e.g. like the Username attribute) and methods (e.g. like the StoreFile method below).
+
+// You can add other attributes here if you want! But note that in order for attributes to
+// be included when this struct is serialized to/from JSON, they must be capitalized.
+// On the flipside, if you have an attribute that you want to be able to access from
+// this struct's methods, but you DON'T want that value to be included in the serialized value
+// of this struct that's stored in datastore, then you can use a "private" variable (e.g. one that
+// begins with a lowercase letter).
+
 type User struct {
 	Username      string
 	Password      string
 	UserEK        []byte
 	UserPKEDecKey userlib.PKEDecKey
 	UserDSSignKey userlib.DSSignKey
-
-	// You can add other attributes here if you want! But note that in order for attributes to
-	// be included when this struct is serialized to/from JSON, they must be capitalized.
-	// On the flipside, if you have an attribute that you want to be able to access from
-	// this struct's methods, but you DON'T want that value to be included in the serialized value
-	// of this struct that's stored in datastore, then you can use a "private" variable (e.g. one that
-	// begins with a lowercase letter).
 }
 
 type FileMetaData struct {
@@ -153,14 +154,12 @@ type DTO struct {
 	MAC       []byte
 }
 
-func Byte2Str(b []byte) string {
+func byte2Str(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
 
-// NOTE: The following methods have toy (insecure!) implementations.
-
 // source string -> UUID, rememeber to check err after calling it
-func GetUUID(source string) (UUID userlib.UUID, err error) {
+func getUUID(source string) (UUID userlib.UUID, err error) {
 	UUID, err = uuid.FromBytes(userlib.Hash([]byte(source))[:keysize])
 	if err != nil {
 		return UUID, err
@@ -169,15 +168,17 @@ func GetUUID(source string) (UUID userlib.UUID, err error) {
 }
 
 // wrap struct into encrypted DTO and store into datastore, rememeber to check err after calling it
-func DTOWrappingandStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo string) (err error) {
+func dtoWrappingAndStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo string) (err error) {
 	var dto DTO
 	var vjson []byte
+
 	//mashal and encrypt
 	vjson, err = json.Marshal(v)
 	if err != nil {
 		return err
 	}
 	dto.Encrypted = userlib.SymEnc(EK, userlib.RandomBytes(keysize), vjson)
+
 	// MAC
 	var MK []byte
 	MK, err = userlib.HashKDF(EK, []byte(macInfo))
@@ -188,6 +189,7 @@ func DTOWrappingandStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo st
 	if err != nil {
 		return err
 	}
+
 	// store dto into datastore
 	var dtojson []byte
 	dtojson, err = json.Marshal(dto)
@@ -228,7 +230,8 @@ func DTOunwrap(EK []byte, macInfo string, dtojson []byte) (structjson []byte, er
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	var userdata User
 	userdata.Username = username
-	userdata.Password = Byte2Str(userlib.Hash([]byte(password + username)))
+	userdata.Password = byte2Str(userlib.Hash([]byte(password + username)))
+
 	// RSA key management
 	var RSApk userlib.PublicKeyType
 	var RSAsk userlib.PrivateKeyType
@@ -241,6 +244,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 	userdata.UserPKEDecKey = RSAsk
+
 	// DS key management
 	var DSpk userlib.DSVerifyKey
 	var DSsk userlib.DSSignKey
@@ -253,18 +257,20 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 		return nil, err
 	}
 	userdata.UserDSSignKey = DSsk
+
 	// dto struct initialization
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
 	userdata.UserEK = EK
 	var UUID userlib.UUID
-	UUID, err = GetUUID(username)
+	UUID, err = getUUID(username)
 	if err != nil {
 		return nil, err
 	}
-	err = DTOWrappingandStore(userdata, EK, UUID, "mac_user")
+	err = dtoWrappingAndStore(userdata, EK, UUID, "mac_user")
 	if err != nil {
 		return nil, err
 	}
+
 	// return result
 	return &userdata, nil
 }
@@ -272,7 +278,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	// get dtojson
 	var UUID userlib.UUID
-	UUID, err = GetUUID(username)
+	UUID, err = getUUID(username)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +305,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	// check existence of file metadata
 	var metaUUID userlib.UUID
-	metaUUID, err = GetUUID(userdata.Username + filename)
+	metaUUID, err = getUUID(userdata.Username + filename)
 	if err != nil {
 		return err
 	}
@@ -314,11 +320,11 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 			return err
 		}
 		var filekeyUUID userlib.UUID
-		filekeyUUID, err = GetUUID(userdata.Username + userdata.Username + filename + "key")
+		filekeyUUID, err = getUUID(userdata.Username + userdata.Username + filename + "key")
 		if err != nil {
 			return err
 		}
-		err = DTOWrappingandStore(fileKey, fileKeyEK, filekeyUUID, "mac_file_key")
+		err = dtoWrappingAndStore(fileKey, fileKeyEK, filekeyUUID, "mac_file_key")
 		if err != nil {
 			return err
 		}
@@ -329,7 +335,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		if err != nil {
 			return err
 		}
-		err = DTOWrappingandStore(file, fileKey.EncKey, fileUUID, "mac_file")
+		err = dtoWrappingAndStore(file, fileKey.EncKey, fileUUID, "mac_file")
 		if err != nil {
 			return err
 		}
