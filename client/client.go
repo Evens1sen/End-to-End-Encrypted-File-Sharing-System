@@ -426,11 +426,98 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
 	invitationPtr uuid.UUID, err error) {
-	return
+	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
+	if err != nil {
+		return uuid.Nil, errors.New("You don't have this file")
+	}
+
+	FileMetaDataJson, ok := userlib.DatastoreGet(fileMetaDataUUID)
+	if !ok {
+		return uuid.Nil, err
+	}
+
+	EK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_key"))
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	fileMetaDataJson, err := dtoUnwrap(EK, "mac_file_key", FileMetaDataJson)
+	var fileMetaData FileMetaData
+	err = json.Unmarshal(fileMetaDataJson, fileMetaData)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	var invitation Invitation
+	invitation.Sender = userdata.Username
+	invitation.Receiver = recipientUsername
+	invitation.FileUUID = fileMetaData.FileUUID
+	invitation.FileKeyPtr = fileMetaData.FileKeyPtr
+	invitation.SourceKey = fileMetaData.SourceKey
+
+	invitationJson, err := json.Marshal(invitation)
+	invitationUUID, err := getUUID(invitation.Sender + invitation.Receiver + filename)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	receiverSk, ok := userlib.KeystoreGet(recipientUsername + "public_enc")
+	if !ok {
+		return uuid.Nil, err
+	}
+
+	var invitationDTO DTO
+	invitationDTO.Encrypted, err = userlib.PKEEnc(receiverSk, invitationJson)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	invitationDTO.MAC, err = userlib.DSSign(userdata.UserDSSignKey, invitationDTO.Encrypted)
+	invitationDTOJson, err := json.Marshal(invitationDTO)
+	userlib.DatastoreSet(invitationUUID, invitationDTOJson)
+	return invitationUUID, err
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
-	return nil
+	// Get the invitation information
+	invitationDTOJson, ok := userlib.DatastoreGet(invitationPtr)
+	if !ok {
+		return errors.New("Cannot find invitation")
+	}
+
+	var invitationDTO DTO
+	json.Unmarshal(invitationDTOJson, invitationDTO)
+
+	senderVerifyKey, ok := userlib.KeystoreGet(senderUsername + "digital_sig")
+	if !ok {
+		return errors.New("Cannot find sender's verify key")
+	}
+	err := userlib.DSVerify(senderVerifyKey, invitationDTO.Encrypted, invitationDTO.MAC)
+	if err != nil {
+		return err
+	}
+
+	invitationJson, err := userlib.PKEDec(userdata.UserPKEDecKey, invitationDTO.Encrypted)
+	if err != nil {
+		return err
+	}
+	var invitation Invitation
+	json.Unmarshal(invitationJson, invitation)
+
+	// Create a new file metadata in user's namespace
+	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
+	if err != nil {
+		return err
+	}
+
+	var fileMetaData FileMetaData
+	fileMetaData.Original = false
+	fileMetaData.FileUUID = invitation.FileUUID
+	fileMetaData.FileKeyPtr = invitation.FileKeyPtr
+	fileMetaData.ChildrenKeyPtrMap = nil
+	fileMetaData.SourceKey = invitation.SourceKey
+
+	err = dtoWrappingAndStore(fileMetaData, userdata.UserEK, fileMetaDataUUID, "mac_file_meta")
+	return err
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
