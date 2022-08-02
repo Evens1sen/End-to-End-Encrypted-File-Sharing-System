@@ -200,7 +200,7 @@ func dtoWrappingAndStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo st
 	return nil
 }
 
-func DTOunwrap(EK []byte, macInfo string, dtojson []byte) (structjson []byte, err error) {
+func dtoUnwrap(EK []byte, macInfo string, dtojson []byte) (structjson []byte, err error) {
 	var dto DTO
 	err = json.Unmarshal(dtojson, &dto)
 	if err != nil {
@@ -288,7 +288,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 	//get EK and unmarshal dtojson to userjson
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
-	userjson, err := DTOunwrap(EK, "mac_user", dtojson)
+	userjson, err := dtoUnwrap(EK, "mac_user", dtojson)
 	if err != nil {
 		return nil, err
 	}
@@ -329,9 +329,9 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 			return err
 		}
 		// 2.create File and store
-		file := File{1, Byte2Str(userlib.RandomBytes(keysize))}
+		file := File{1, byte2Str(userlib.RandomBytes(keysize))}
 		var fileUUID userlib.UUID
-		fileUUID, err = GetUUID(userdata.Username + filename + file.Salt)
+		fileUUID, err = getUUID(userdata.Username + filename + file.Salt)
 		if err != nil {
 			return err
 		}
@@ -349,11 +349,11 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 			return err
 		}
 		var metadataUUID userlib.UUID
-		metadataUUID, err = GetUUID(userdata.Username + filename)
+		metadataUUID, err = getUUID(userdata.Username + filename)
 		if err != nil {
 			return err
 		}
-		err = DTOWrappingandStore(metadata, metadataEK, metadataUUID, "mac_file_meta")
+		err = dtoWrappingAndStore(metadata, metadataEK, metadataUUID, "mac_file_meta")
 		if err != nil {
 			return err
 		}
@@ -365,11 +365,11 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 			return err
 		}
 		var fileBlockUUID userlib.UUID
-		fileBlockUUID, err = GetUUID(userdata.Username + filename + "0" + file.Salt)
+		fileBlockUUID, err = getUUID(userdata.Username + filename + "0" + file.Salt)
 		if err != nil {
 			return err
 		}
-		err = DTOWrappingandStore(fileBlock, fileBlockEK, fileBlockUUID, "mac_file_node0")
+		err = dtoWrappingAndStore(fileBlock, fileBlockEK, fileBlockUUID, "mac_file_node0")
 		if err != nil {
 			return err
 		}
