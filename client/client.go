@@ -440,10 +440,8 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	if err != nil {
 		return uuid.Nil, err
 	}
-
-	fileMetaDataJson, err := dtoUnwrap(EK, "mac_file_key", FileMetaDataJson)
 	var fileMetaData FileMetaData
-	err = json.Unmarshal(fileMetaDataJson, fileMetaData)
+	err = dtoUnwrap(EK, "mac_file_key", FileMetaDataJson, &fileMetaData)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -485,7 +483,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	}
 
 	var invitationDTO DTO
-	json.Unmarshal(invitationDTOJson, invitationDTO)
+	json.Unmarshal(invitationDTOJson, &invitationDTO)
 
 	senderVerifyKey, ok := userlib.KeystoreGet(senderUsername + "digital_sig")
 	if !ok {
@@ -501,14 +499,9 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 	var invitation Invitation
-	json.Unmarshal(invitationJson, invitation)
+	json.Unmarshal(invitationJson, &invitation)
 
 	// Create a new file metadata in user's namespace
-	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
-	if err != nil {
-		return err
-	}
-
 	var fileMetaData FileMetaData
 	fileMetaData.Original = false
 	fileMetaData.FileUUID = invitation.FileUUID
@@ -516,7 +509,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	fileMetaData.ChildrenKeyPtrMap = nil
 	fileMetaData.SourceKey = invitation.SourceKey
 
-	err = dtoWrappingAndStore(fileMetaData, userdata.UserEK, fileMetaDataUUID, "mac_file_meta")
+	err = dtoWrappingAndStore(fileMetaData, userdata.UserEK, userdata.Username+filename, "mac_file_meta")
 	return err
 }
 
