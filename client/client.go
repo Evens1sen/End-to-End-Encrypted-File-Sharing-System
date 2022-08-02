@@ -16,7 +16,6 @@ import (
 	// hex.EncodeToString(...) is useful for converting []byte to string
 
 	// Useful for string manipulation
-	"strings"
 
 	// Useful for formatting strings (e.g. `fmt.Sprintf`).
 	"fmt"
@@ -365,6 +364,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		}
 
 	}
+	// overwrite file
 	// step 1:get file meta data
 	var metadataEK []byte
 	metadataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
@@ -392,19 +392,43 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		return err
 	}
 	// step 3:get and modify file
+	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileUUID)
+	if !ok {
+		return errors.New("No corresponding file found.")
+	}
+	var file File
+	err = dtoUnwrap(fileKey.EncKey, "mac_file", dtojson, &file)
+	if err != nil {
+		return err
+	}
+	file.FileBlockCnt = 1
 	// step 4:get and modify file block
-	// overwrite file
-
-	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
+	var fileBlockUUID userlib.UUID
+	fileBlockUUID, err = getUUID(userdata.Username + filename + file.Salt + "0")
 	if err != nil {
 		return err
 	}
-	contentBytes, err := json.Marshal(content)
+	dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
+	if !ok {
+		return errors.New("No corresponding fileBlock found.")
+	}
+	var fileBlockEK []byte
+	fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node0"))
 	if err != nil {
 		return err
 	}
-	userlib.DatastoreSet(storageKey, contentBytes)
-	return
+	var fileBlock FileBlock
+	err = dtoUnwrap(fileBlockEK, "mac_file_node0", dtojson, &fileBlock)
+	if err != nil {
+		return err
+	}
+	fileBlock.Content = content
+	// step 5: store into datastore
+	err = dtoWrappingAndStore(fileBlock, fileBlockEK, userdata.Username+filename+file.Salt+"0", "mac_file_node0")
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (userdata *User) AppendToFile(filename string, content []byte) error {
@@ -412,16 +436,78 @@ func (userdata *User) AppendToFile(filename string, content []byte) error {
 }
 
 func (userdata *User) LoadFile(filename string) (content []byte, err error) {
-	storageKey, err := uuid.FromBytes(userlib.Hash([]byte(filename + userdata.Username))[:16])
+	// check existence of file metadata
+	var metaUUID userlib.UUID
+	metaUUID, err = getUUID(userdata.Username + filename)
 	if err != nil {
 		return nil, err
 	}
-	dataJSON, ok := userlib.DatastoreGet(storageKey)
+	dtojson, ok := userlib.DatastoreGet(metaUUID)
 	if !ok {
-		return nil, errors.New(strings.ToTitle("file not found"))
+		return nil, errors.New("No corresponding file metadata found.")
 	}
-	err = json.Unmarshal(dataJSON, &content)
-	return content, err
+	// load file
+	// step 1:get file meta data
+	var metadataEK []byte
+	metadataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
+	if err != nil {
+		return nil, err
+	}
+	var fileMetaData FileMetaData
+	err = dtoUnwrap(metadataEK, "mac_file_meta", dtojson, &fileMetaData)
+	if err != nil {
+		return nil, err
+	}
+	// step 2:get file key
+	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileKeyPtr)
+	if !ok {
+		return nil, errors.New("No corresponding file key found.")
+	}
+	var fileKeyEK []byte
+	fileKeyEK, err = userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
+	if err != nil {
+		return nil, err
+	}
+	var fileKey FileKey
+	err = dtoUnwrap(fileKeyEK, "mac_file_key", dtojson, &fileKey)
+	if err != nil {
+		return nil, err
+	}
+	// step 3:get file
+	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileUUID)
+	if !ok {
+		return nil, errors.New("No corresponding file found.")
+	}
+	var file File
+	err = dtoUnwrap(fileKey.EncKey, "mac_file", dtojson, &file)
+	if err != nil {
+		return nil, err
+	}
+	// step 4:get file block
+	var res []byte
+	var fileBlockUUID userlib.UUID
+	var fileBlockEK []byte
+	var fileBlock FileBlock
+	for i := 0; i < file.FileBlockCnt; i++ {
+		fileBlockUUID, err = getUUID(userdata.Username + filename + file.Salt + strconv.Itoa(i))
+		if err != nil {
+			return nil, err
+		}
+		dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
+		if !ok {
+			return nil, errors.New("No corresponding fileBlock found.")
+		}
+		fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
+		if err != nil {
+			return nil, err
+		}
+		err = dtoUnwrap(fileBlockEK, "mac_file_node"+strconv.Itoa(i), dtojson, &fileBlock)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, fileBlock.Content...)
+	}
+	return res, nil
 }
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
