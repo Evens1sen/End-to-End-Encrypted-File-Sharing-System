@@ -532,6 +532,39 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return uuid.Nil, err
 	}
 
+	// Create a new FileKeyPtr points to the same FileKey for each receiver
+	if fileMetaData.Original {
+		// Retrieve the FileKey by FileKeyPtr
+		dtojson, ok := userlib.DatastoreGet(fileMetaData.FileKeyPtr)
+		if !ok {
+			return uuid.Nil, errors.New("No corresponding file key found.")
+		}
+
+		fileKeyEK, err := userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		var fileKey FileKey
+		err = dtoUnwrap(fileKeyEK, "mac_file_key", dtojson, &fileKey)
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		// Store a new FileKeyPtr -> FileKey into datastore
+		newFilekeyPtr, err := getUUID(userdata.Username + recipientUsername + filename + "key")
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		err = dtoWrappingAndStore(fileKey, fileKeyEK, userdata.Username+recipientUsername+filename+"key", "mac_file_key")
+		if err != nil {
+			return uuid.Nil, err
+		}
+
+		fileMetaData.ChildrenKeyPtrMap[recipientUsername] = newFilekeyPtr
+	}
+
 	var invitation Invitation
 	invitation.Sender = userdata.Username
 	invitation.Receiver = recipientUsername
