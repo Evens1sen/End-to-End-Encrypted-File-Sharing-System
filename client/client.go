@@ -270,7 +270,7 @@ func (userdata *User) getMetaDataAndKeyFromJSON(dtojson []byte, fileMetaData *Fi
 	// Step 2:get file key
 	keyDTOJson, ok := userlib.DatastoreGet(fileMetaData.FileKeyPtr)
 	if !ok {
-		return errors.New("No corresponding file key found.")
+		return errors.New("no corresponding file key found")
 	}
 	var fileKeyEK []byte
 	fileKeyEK, err = userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
@@ -342,7 +342,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	}
 	dtojson, ok := userlib.DatastoreGet(UUID)
 	if !ok {
-		return nil, errors.New("No corresponding user found.")
+		return nil, errors.New("no corresponding user found")
 	}
 	//get EK and unmarshal dtojson to userjson
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
@@ -417,7 +417,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	// step 3:get and modify file
 	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileUUID)
 	if !ok {
-		return errors.New("No corresponding file found.")
+		return errors.New("no corresponding file found")
 	}
 	var file File
 	err = dtoUnwrap(fileKey.EncKey, "mac_file", dtojson, &file)
@@ -434,7 +434,7 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 	}
 	dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
 	if !ok {
-		return errors.New("No corresponding fileBlock found.")
+		return errors.New("no corresponding fileBlock found")
 	}
 	var fileBlockEK []byte
 	fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node0"))
@@ -467,7 +467,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	}
 	dtojson, ok := userlib.DatastoreGet(metaUUID)
 	if !ok {
-		return errors.New("No corresponding file metadata found.")
+		return errors.New("no corresponding file metadata found")
 	}
 
 	// Step2: load file
@@ -481,7 +481,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	// Step 3:get and modify file
 	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileUUID)
 	if !ok {
-		return errors.New("No corresponding file found.")
+		return errors.New("no corresponding file found")
 	}
 	var file File
 	err = dtoUnwrap(fileKey.EncKey, "mac_file", dtojson, &file)
@@ -526,7 +526,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	}
 	dtojson, ok := userlib.DatastoreGet(metaUUID)
 	if !ok {
-		return nil, errors.New("No corresponding file metadata found.")
+		return nil, errors.New("no corresponding file metadata found")
 	}
 
 	// Step2: load file
@@ -540,7 +540,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	// Step 3: get file
 	dtojson, ok = userlib.DatastoreGet(fileMetaData.FileUUID)
 	if !ok {
-		return nil, errors.New("No corresponding file found.")
+		return nil, errors.New("no corresponding file found")
 	}
 	var file File
 	err = dtoUnwrap(fileKey.EncKey, "mac_file", dtojson, &file)
@@ -558,9 +558,10 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 		if err != nil {
 			return nil, err
 		}
+
 		dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
 		if !ok {
-			return nil, errors.New("No corresponding fileBlock found.")
+			return nil, errors.New("no corresponding fileBlock found")
 		}
 		fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
 		fileBlockEK = fileBlockEK[:keysize]
@@ -581,7 +582,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	// Retrive the fileMetaData
 	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
 	if err != nil {
-		return uuid.Nil, errors.New("You don't have this file")
+		return uuid.Nil, errors.New("you don't have this file")
 	}
 
 	FileMetaDataJson, ok := userlib.DatastoreGet(fileMetaDataUUID)
@@ -601,11 +602,12 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	}
 
 	// Create a new FileKeyPtr points to the same FileKey for each receiver
+	var newFileKeyPtr userlib.UUID
 	if fileMetaData.Original {
 		// Retrieve the FileKey by FileKeyPtr
 		dtojson, ok := userlib.DatastoreGet(fileMetaData.FileKeyPtr)
 		if !ok {
-			return uuid.Nil, errors.New("No corresponding file key found.")
+			return uuid.Nil, errors.New("no corresponding file key found")
 		}
 
 		fileKeyEK, err := userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
@@ -621,17 +623,22 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		}
 
 		// Store a new FileKeyPtr -> FileKey into datastore
-		newFilekeyPtr, err := getUUID(userdata.Username + recipientUsername + filename + "key")
+		newFileKeyPtr, err = getUUID(userdata.Username + recipientUsername + filename + "key")
 		if err != nil {
 			return uuid.Nil, err
 		}
 
-		err = dtoWrappingAndStore(fileKey, fileKeyEK, newFilekeyPtr, "mac_file_key")
+		err = dtoWrappingAndStore(fileKey, fileKeyEK, newFileKeyPtr, "mac_file_key")
 		if err != nil {
 			return uuid.Nil, err
 		}
 
-		fileMetaData.ChildrenKeyPtrMap[recipientUsername] = newFilekeyPtr
+		fileMetaData.ChildrenKeyPtrMap[recipientUsername] = newFileKeyPtr
+		_, err = structWrapAndStoreWithHashKDF(fileMetaData, userdata.UserEK,
+			"encrypt_file_meta", "mac_file_meta", userdata.Username+filename)
+		if err != nil {
+			return uuid.Nil, err
+		}
 	}
 
 	// Assemble the invitation and body
@@ -656,7 +663,11 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	invitationBody.Sender = userdata.Username
 	invitationBody.Receiver = recipientUsername
 	invitationBody.FileUUID = fileMetaData.FileUUID
-	invitationBody.FileKeyPtr = fileMetaData.FileKeyPtr
+	if fileMetaData.Original {
+		invitationBody.FileKeyPtr = newFileKeyPtr
+	} else {
+		invitationBody.FileKeyPtr = fileMetaData.FileKeyPtr
+	}
 	invitationBody.SourceKey = fileMetaData.SourceKey
 
 	// Use symmetric key for Invitation body
@@ -686,17 +697,20 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	// Get the invitation information
 	invitationDTOJson, ok := userlib.DatastoreGet(invitationPtr)
 	if !ok {
-		return errors.New("Cannot find invitation")
+		return errors.New("cannot find invitation")
 	}
 
 	var invitationDTO DTO
-	json.Unmarshal(invitationDTOJson, &invitationDTO)
+	err := json.Unmarshal(invitationDTOJson, &invitationDTO)
+	if err != nil {
+		return err
+	}
 
 	senderVerifyKey, ok := userlib.KeystoreGet(senderUsername + "digital_sig")
 	if !ok {
-		return errors.New("Cannot find sender's verify key")
+		return errors.New("cannot find sender's verify key")
 	}
-	err := userlib.DSVerify(senderVerifyKey, invitationDTO.Encrypted, invitationDTO.MAC)
+	err = userlib.DSVerify(senderVerifyKey, invitationDTO.Encrypted, invitationDTO.MAC)
 	if err != nil {
 		return err
 	}
@@ -706,11 +720,14 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 		return err
 	}
 	var invitation Invitation
-	json.Unmarshal(invitationJson, &invitation)
+	err = json.Unmarshal(invitationJson, &invitation)
+	if err != nil {
+		return err
+	}
 
 	invitationBodyDTOJson, ok := userlib.DatastoreGet(invitation.BodyPtr)
 	if !ok {
-		return errors.New("Cannot find invitation body")
+		return errors.New("cannot find invitation body")
 	}
 
 	var invitationBody InvitationBody
@@ -729,51 +746,37 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 }
 
 func (userdata *User) RevokeAccess(filename string, recipientUsername string) error {
+	// Find the metadata of the given file
 	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
 	if err != nil {
 		return err
 	}
 	fileMetaDataDTOJson, ok := userlib.DatastoreGet(fileMetaDataUUID)
 	if !ok {
-		return errors.New("Cannot find FileMetaData")
-	}
-
-	metadataEK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
-	metadataEK = metadataEK[:keysize]
-	if err != nil {
-		return err
+		return errors.New("cannot find FileMetaData")
 	}
 
 	var fileMetaData FileMetaData
-	err = dtoUnwrap(metadataEK, "mac_file_meta", fileMetaDataDTOJson, &fileMetaData)
+	var oldFileKey FileKey
+	err = userdata.getMetaDataAndKeyFromJSON(fileMetaDataDTOJson, &fileMetaData, &oldFileKey)
 	if err != nil {
 		return err
 	}
 
 	if !fileMetaData.Original {
-		return errors.New("Cannot revoke the shared file")
+		return errors.New("cannot revoke the shared file")
 	}
 
 	// Step1: Update the FileKey for users except the revoked user
 	// Optional: Delete the FileMetaData in the revoked user's namespace (Maybe done elsewhere)
-	dtojson, ok := userlib.DatastoreGet(fileMetaData.FileKeyPtr)
-	if !ok {
-		return errors.New("No corresponding file key found.")
-	}
-
 	fileKeyEK, err := userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
 	fileKeyEK = fileKeyEK[:keysize]
-	if err != nil {
-		return err
-	}
-
-	var oldFileKey FileKey
-	err = dtoUnwrap(fileKeyEK, "mac_file_key", dtojson, &oldFileKey)
-	if err != nil {
-		return err
-	}
-
 	newFileKey := FileKey{userlib.RandomBytes(keysize)}
+	err = dtoWrappingAndStore(newFileKey, fileKeyEK, fileMetaData.FileKeyPtr, "mac_file_key")
+	if err != nil {
+		return err
+	}
+
 	for name, fkptr := range fileMetaData.ChildrenKeyPtrMap {
 		if name != recipientUsername {
 			err = dtoWrappingAndStore(newFileKey, fileKeyEK, fkptr, "mac_file_key")
@@ -783,32 +786,35 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		}
 	}
 
-	// Step2: Re-encrypt the File and generate new File salt
-	newFileSalt := string(userlib.RandomBytes(keysize))
-	fileDTOjson, ok := userlib.DatastoreGet(fileMetaData.FileUUID)
+	// Step2: Generate new File salt and re-encrypt the File
+	fileDTOJson, ok := userlib.DatastoreGet(fileMetaData.FileUUID)
 	if !ok {
-		return errors.New("No corresponding file found.")
+		return errors.New("no corresponding file found")
 	}
 
 	var file File
-	err = dtoUnwrap(oldFileKey.EncKey, "mac_file", fileDTOjson, &file)
+	err = dtoUnwrap(oldFileKey.EncKey, "mac_file", fileDTOJson, &file)
 	if err != nil {
 		return err
 	}
 
-	file.Salt = newFileSalt
-	dtoWrappingAndStore(file, newFileKey.EncKey, fileMetaData.FileUUID, "mac_file")
+	oldFileSalt := file.Salt
+	file.Salt = hex.EncodeToString(userlib.RandomBytes(keysize)) // TODO: Consider type conversion
+	err = dtoWrappingAndStore(file, newFileKey.EncKey, fileMetaData.FileUUID, "mac_file")
+	if err != nil {
+		return err
+	}
 
 	// Step3: Re-encrypt all the FileBlocks
 	for i := 0; i < file.FileBlockCnt; i++ {
-		fileBlockUUID, err := getUUID(string(fileMetaData.FileUUID.String() + file.Salt + strconv.Itoa(i)))
+		fileBlockUUID, err := getUUID(fileMetaData.FileUUID.String() + oldFileSalt + strconv.Itoa(i))
 		if err != nil {
 			return err
 		}
 
-		dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
+		dtojson, ok := userlib.DatastoreGet(fileBlockUUID)
 		if !ok {
-			return errors.New("No corresponding fileBlock found.")
+			return errors.New("no corresponding fileBlock found")
 		}
 
 		fileBlockEK, err := userlib.HashKDF(oldFileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
@@ -823,19 +829,13 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 			return err
 		}
 
-		newFileBlockUUID, err := getUUID(string(fileMetaData.FileUUID.String() + newFileSalt + strconv.Itoa(i)))
-		if err != nil {
-			return err
-		}
-
-		newFileBlockEK, err := userlib.HashKDF(newFileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
-		newFileBlockEK = newFileBlockEK[:keysize]
-		if err != nil {
-			return err
-		}
-
 		userlib.DatastoreDelete(fileBlockUUID)
-		err = dtoWrappingAndStore(fileBlock, newFileBlockEK, newFileBlockUUID, "mac_file_node"+strconv.Itoa(file.FileBlockCnt))
+		_, err = structWrapAndStoreWithHashKDF(fileBlock, newFileKey.EncKey,
+			"encrypt_file_node"+strconv.Itoa(i), "mac_file_node"+strconv.Itoa(i),
+			fileMetaData.FileUUID.String()+file.Salt+strconv.Itoa(i))
+
+		fileBlockUUID, err = getUUID(fileMetaData.FileUUID.String() + file.Salt + strconv.Itoa(i))
+
 		if err != nil {
 			return err
 		}
