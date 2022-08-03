@@ -286,13 +286,28 @@ func (userdata *User) getMetaDataAndKeyFromJSON(dtojson []byte, fileMetaData *Fi
 }
 
 func InitUser(username string, password string) (userdataptr *User, err error) {
+	//check empty username
+	if username == "" {
+		return nil, errors.New("No empty username allowed.")
+	}
+	//check unique username
+	var UUID userlib.UUID
+	UUID, err = getUUID(username)
+	if err != nil {
+		return nil, err
+	}
+	_, ok := userlib.DatastoreGet(UUID)
+	if ok {
+		return nil, errors.New("Duplicate username not allowed.")
+	}
+	//ordinary process
 	var userdata User
 	userdata.Username = username
 	userdata.Password = byte2Str(userlib.Hash([]byte(password + username)))
 
 	// RSA key management
-	var RSApk userlib.PublicKeyType
-	var RSAsk userlib.PrivateKeyType
+	var RSApk userlib.PKEEncKey
+	var RSAsk userlib.PKEDecKey
 	RSApk, RSAsk, err = userlib.PKEKeyGen()
 	if err != nil {
 		return nil, err
@@ -319,11 +334,6 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	// dto struct initialization
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
 	userdata.UserEK = EK
-	var UUID userlib.UUID
-	UUID, err = getUUID(username)
-	if err != nil {
-		return nil, err
-	}
 	err = dtoWrappingAndStore(userdata, EK, UUID, "mac_user")
 	if err != nil {
 		return nil, err
