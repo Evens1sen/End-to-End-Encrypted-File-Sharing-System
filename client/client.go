@@ -233,6 +233,7 @@ func dtoUnwrap(EK []byte, macInfo string, dtojson []byte, vptr interface{}) (err
 
 func structWrapAndStoreWithHashKDF(v interface{}, sourceKey []byte, encInfo string, macInfo string, uuidstr string) (UUID userlib.UUID, err error) {
 	EK, err := userlib.HashKDF(sourceKey, []byte(encInfo))
+	EK = EK[:keysize]
 	if err != nil {
 		return UUID, err
 	}
@@ -251,6 +252,7 @@ func (userdata *User) getMetaDataAndKeyFromJSON(dtojson []byte, fileMetaData *Fi
 	// step 1:get file metadata
 	var metaDataEK []byte
 	metaDataEK, err = userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
+	metaDataEK = metaDataEK[:keysize]
 	if err != nil {
 		return err
 	}
@@ -266,6 +268,7 @@ func (userdata *User) getMetaDataAndKeyFromJSON(dtojson []byte, fileMetaData *Fi
 	}
 	var fileKeyEK []byte
 	fileKeyEK, err = userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
+	fileKeyEK = fileKeyEK[:keysize]
 	if err != nil {
 		return err
 	}
@@ -379,16 +382,17 @@ func (userdata *User) StoreFile(filename string, content []byte) (err error) {
 		var ChildrenKeyPtrMap map[string]userlib.UUID
 		ChildrenKeyPtrMap = make(map[string]userlib.UUID)
 		metaData := FileMetaData{true, fileUUID, filekeyUUID, ChildrenKeyPtrMap, sourceKey}
-		_, err = structWrapAndStoreWithHashKDF(metaData, sourceKey, "encrypt_file_meta", "mac_file_meta", userdata.Username+filename)
+		_, err = structWrapAndStoreWithHashKDF(metaData, userdata.UserEK, "encrypt_file_meta", "mac_file_meta", userdata.Username+filename)
 		if err != nil {
 			return err
 		}
 		// 4. create FileBlock and store
 		fileBlock := FileBlock{content}
-		_, err = structWrapAndStoreWithHashKDF(fileBlock, sourceKey, "encrypt_file_node0", "mac_file_meta0", userdata.Username+filename+"0"+file.Salt)
+		_, err = structWrapAndStoreWithHashKDF(fileBlock, fileKey.EncKey, "encrypt_file_node0", "mac_file_node0", fileUUID.String()+file.Salt+"0")
 		if err != nil {
 			return err
 		}
+		return nil
 	}
 	// overwrite file
 	var fileMetaData FileMetaData
@@ -532,7 +536,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 	var fileBlockEK []byte
 	var fileBlock FileBlock
 	for i := 0; i < file.FileBlockCnt; i++ {
-		fileBlockUUID, err = getUUID(string(fileMetaData.FileUUID.String() + file.Salt + strconv.Itoa(i)))
+		fileBlockUUID, err = getUUID(fileMetaData.FileUUID.String() + file.Salt + strconv.Itoa(i))
 		if err != nil {
 			return nil, err
 		}
@@ -541,6 +545,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 			return nil, errors.New("No corresponding fileBlock found.")
 		}
 		fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
+		fileBlockEK = fileBlockEK[:keysize]
 		if err != nil {
 			return nil, err
 		}
