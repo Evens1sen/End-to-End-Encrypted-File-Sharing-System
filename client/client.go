@@ -141,6 +141,11 @@ type FileBlock struct {
 }
 
 type Invitation struct {
+	BodyKey []byte
+	BodyPtr userlib.UUID
+}
+
+type InvitationBody struct {
 	Sender     string
 	Receiver   string
 	FileUUID   userlib.UUID
@@ -220,7 +225,8 @@ func dtoUnwrap(EK []byte, macInfo string, dtojson []byte, vptr interface{}) (err
 	}
 	equal := userlib.HMACEqual(MAC, dto.MAC)
 	if !equal {
-		return errors.New("User struct is tampered.")
+		errInfo := fmt.Sprintf("%T struct is tampered.", vptr)
+		return errors.New(errInfo)
 	}
 	// decrypt and get userjson
 	structjson := userlib.SymDec(EK, dto.Encrypted)
@@ -572,6 +578,7 @@ func (userdata *User) LoadFile(filename string) (content []byte, err error) {
 
 func (userdata *User) CreateInvitation(filename string, recipientUsername string) (
 	invitationPtr uuid.UUID, err error) {
+	// Retrive the fileMetaData
 	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
 	if err != nil {
 		return uuid.Nil, errors.New("You don't have this file")
@@ -582,13 +589,13 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		return uuid.Nil, err
 	}
 
-	EK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_key"))
+	EK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
 	EK = EK[:keysize]
 	if err != nil {
 		return uuid.Nil, err
 	}
 	var fileMetaData FileMetaData
-	err = dtoUnwrap(EK, "mac_file_key", FileMetaDataJson, &fileMetaData)
+	err = dtoUnwrap(EK, "mac_file_meta", FileMetaDataJson, &fileMetaData)
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -602,6 +609,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		}
 
 		fileKeyEK, err := userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
+		fileKeyEK = fileKeyEK[:keysize]
 		if err != nil {
 			return uuid.Nil, err
 		}
@@ -626,19 +634,38 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 		fileMetaData.ChildrenKeyPtrMap[recipientUsername] = newFilekeyPtr
 	}
 
-	var invitation Invitation
-	invitation.Sender = userdata.Username
-	invitation.Receiver = recipientUsername
-	invitation.FileUUID = fileMetaData.FileUUID
-	invitation.FileKeyPtr = fileMetaData.FileKeyPtr
-	invitation.SourceKey = fileMetaData.SourceKey
-
-	invitationJson, err := json.Marshal(invitation)
-	invitationUUID, err := getUUID(invitation.Sender + invitation.Receiver + filename)
+	// Assemble the invitation and body
+	invitationUUID, err := getUUID(userdata.Username + recipientUsername + filename)
 	if err != nil {
 		return uuid.Nil, err
 	}
 
+	var invitation Invitation
+	invitation.BodyKey = userlib.RandomBytes(keysize)
+	invitation.BodyPtr, err = getUUID(userdata.Username + recipientUsername + filename + "body")
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	invitationJson, err := json.Marshal(invitation)
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	var invitationBody InvitationBody
+	invitationBody.Sender = userdata.Username
+	invitationBody.Receiver = recipientUsername
+	invitationBody.FileUUID = fileMetaData.FileUUID
+	invitationBody.FileKeyPtr = fileMetaData.FileKeyPtr
+	invitationBody.SourceKey = fileMetaData.SourceKey
+
+	// Use symmetric key for Invitation body
+	err = dtoWrappingAndStore(invitationBody, invitation.BodyKey, invitation.BodyPtr, "mac_invitation_body")
+	if err != nil {
+		return uuid.Nil, err
+	}
+
+	// Use RSA and DS for Invitation
 	receiverSk, ok := userlib.KeystoreGet(recipientUsername + "public_enc")
 	if !ok {
 		return uuid.Nil, err
@@ -681,19 +708,23 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	var invitation Invitation
 	json.Unmarshal(invitationJson, &invitation)
 
+	invitationBodyDTOJson, ok := userlib.DatastoreGet(invitation.BodyPtr)
+	if !ok {
+		return errors.New("Cannot find invitation body")
+	}
+
+	var invitationBody InvitationBody
+	err = dtoUnwrap(invitation.BodyKey, "mac_invitation_body", invitationBodyDTOJson, &invitationBody)
+
 	// Create a new file metadata in user's namespace
 	var fileMetaData FileMetaData
 	fileMetaData.Original = false
-	fileMetaData.FileUUID = invitation.FileUUID
-	fileMetaData.FileKeyPtr = invitation.FileKeyPtr
+	fileMetaData.FileUUID = invitationBody.FileUUID
+	fileMetaData.FileKeyPtr = invitationBody.FileKeyPtr
 	fileMetaData.ChildrenKeyPtrMap = nil
-	fileMetaData.SourceKey = invitation.SourceKey
-	var fileMetaDataUUID userlib.UUID
-	fileMetaDataUUID, err = getUUID(userdata.Username + filename)
-	if err != nil {
-		return err
-	}
-	err = dtoWrappingAndStore(fileMetaData, userdata.UserEK, fileMetaDataUUID, "mac_file_meta")
+	fileMetaData.SourceKey = invitationBody.SourceKey
+
+	_, err = structWrapAndStoreWithHashKDF(fileMetaData, userdata.UserEK, "encrypt_file_meta", "mac_file_meta", userdata.Username+filename)
 	return err
 }
 
