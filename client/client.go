@@ -697,7 +697,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	}
 
 	metadataEK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
-	metadatakEK = metadataEK[:keysize]
+	metadataEK = metadataEK[:keysize]
 	if err != nil {
 		return err
 	}
