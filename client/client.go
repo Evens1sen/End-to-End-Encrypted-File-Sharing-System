@@ -184,7 +184,7 @@ func dtoWrappingAndStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo st
 	if err != nil {
 		return err
 	}
-	dto.MAC, err = userlib.HMACEval(MK, dto.Encrypted)
+	dto.MAC, err = userlib.HMACEval(MK[:keysize], dto.Encrypted)
 	if err != nil {
 		return err
 	}
