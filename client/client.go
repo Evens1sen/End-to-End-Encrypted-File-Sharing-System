@@ -166,7 +166,7 @@ func byte2Str(b []byte) string {
 func getUUID(source string) (UUID userlib.UUID, err error) {
 	UUID, err = uuid.FromBytes(userlib.Hash([]byte(source))[:keysize])
 	if err != nil {
-		return UUID, err
+		return uuid.Nil, err
 	}
 	return UUID, nil
 }
@@ -211,7 +211,7 @@ func dtoUnwrap(EK []byte, macInfo string, dtojson []byte, vptr interface{}) (err
 	if err != nil {
 		return err
 	}
-	// get MK and EK
+	// get MK
 	var MK []byte
 	MK, err = userlib.HashKDF(EK, []byte(macInfo))
 	if err != nil {
@@ -241,15 +241,15 @@ func structWrapAndStoreWithHashKDF(v interface{}, sourceKey []byte, encInfo stri
 	EK, err := userlib.HashKDF(sourceKey, []byte(encInfo))
 	EK = EK[:keysize]
 	if err != nil {
-		return UUID, err
+		return uuid.Nil, err
 	}
 	UUID, err = getUUID(uuidstr)
 	if err != nil {
-		return UUID, err
+		return uuid.Nil, err
 	}
 	err = dtoWrappingAndStore(v, EK, UUID, macInfo)
 	if err != nil {
-		return UUID, err
+		return uuid.Nil, err
 	}
 	return UUID, nil
 }
