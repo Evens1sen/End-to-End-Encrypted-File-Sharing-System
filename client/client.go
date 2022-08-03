@@ -184,7 +184,7 @@ func dtoWrappingAndStore(v interface{}, EK []byte, UUID userlib.UUID, macInfo st
 	if err != nil {
 		return err
 	}
-	dto.MAC, err = userlib.HMACEval(MK[:keysize], dto.Encrypted)
+	dto.MAC, err = userlib.HMACEval(MK, dto.Encrypted)
 	if err != nil {
 		return err
 	}
@@ -483,6 +483,7 @@ func (userdata *User) AppendToFile(filename string, content []byte) (err error) 
 	}
 	dtojson, ok = userlib.DatastoreGet(fileBlockUUID)
 	fileBlockEK, err = userlib.HashKDF(fileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(file.FileBlockCnt-1)))
+	fileBlockEK = fileBlockEK[:keysize]
 	if err != nil {
 		return err
 	}
@@ -571,6 +572,7 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	}
 
 	EK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_key"))
+	EK = EK[:keysize]
 	if err != nil {
 		return uuid.Nil, err
 	}
@@ -695,6 +697,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	}
 
 	metadataEK, err := userlib.HashKDF(userdata.UserEK, []byte("encrypt_file_meta"))
+	metadatakEK = metadataEK[:keysize]
 	if err != nil {
 		return err
 	}
@@ -717,6 +720,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	}
 
 	fileKeyEK, err := userlib.HashKDF(fileMetaData.SourceKey, []byte("encrypt_file_key"))
+	fileKeyEK = fileKeyEK[:keysize]
 	if err != nil {
 		return err
 	}
@@ -766,6 +770,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		}
 
 		fileBlockEK, err := userlib.HashKDF(oldFileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
+		fileBlockEK = fileBlockEK[:keysize]
 		if err != nil {
 			return err
 		}
@@ -782,6 +787,7 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 		}
 
 		newFileBlockEK, err := userlib.HashKDF(newFileKey.EncKey, []byte("encrypt_file_node"+strconv.Itoa(i)))
+		newFileBlockEK = newFileBlockEK[:keysize]
 		if err != nil {
 			return err
 		}
