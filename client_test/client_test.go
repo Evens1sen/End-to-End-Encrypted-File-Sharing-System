@@ -6,7 +6,6 @@ package client_test
 import (
 	// Some imports use an underscore to prevent the compiler from complaining
 	// about unused imports.
-	"bytes"
 	_ "encoding/hex"
 	_ "errors"
 	_ "strconv"
@@ -304,7 +303,7 @@ var _ = Describe("Client Tests", func() {
 					break
 				}
 			}
-			err := alice.AppendToFile(aliceFile, []byte(contentTwo))
+			_, err := alice.LoadFile(aliceFile)
 			Expect(err).NotTo(BeNil())
 		})
 	})
@@ -448,48 +447,6 @@ var _ = Describe("Client Tests", func() {
 		})
 		Specify("malicious action detected", func() {
 
-		})
-	})
-
-	Describe("Advanced Tests on file confidentiality and integrity", func() {
-		Specify("Testing confidentiality", func() {
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Storing file data: %s", contentOne)
-			err = alice.StoreFile(aliceFile, []byte(contentOne))
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Doing bad.")
-			dataStore := userlib.DatastoreGetMap()
-			flag := false
-			for _, element := range dataStore {
-				if bytes.Equal(element, []byte(contentOne)) {
-					flag = true
-					break
-				}
-			}
-			Expect(flag).To(Equal(false))
-		})
-
-		Specify("Testing integrity", func() {
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Storing file data: %s", contentOne)
-			err = alice.StoreFile(aliceFile, []byte(contentOne))
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Doing bad.")
-			dataStore := userlib.DatastoreGetMap()
-			for key := range dataStore {
-				dataStore[key] = []byte("I did something bad.")
-			}
-			userlib.DebugMsg("Loading file...")
-			_, err := alice.LoadFile(aliceFile)
-			Expect(err).NotTo(BeNil())
 		})
 	})
 
