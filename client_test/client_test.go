@@ -166,7 +166,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 		})
 
-		Specify("Advanced Test: Testing same file name for different user", func() {
+		Specify("Advanced Test: Testing same file name for different users", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -187,6 +187,124 @@ var _ = Describe("Client Tests", func() {
 			data, err := alice.LoadFile(aliceFile)
 			Expect(err).To(BeNil())
 			Expect(data).To(Equal([]byte(contentOne)))
+		})
+	})
+
+	Describe("Advanced Tests on empty string related file creation, modification and load", func() {
+		Specify("Testing storing empty string and load", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", emptyString)
+			err = alice.StoreFile(aliceFile, []byte(emptyString))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending file data: %s", contentOne)
+			err = alice.AppendToFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			data, err := alice.LoadFile(aliceFile)
+			Expect(err).To(BeNil())
+			Expect(data).To(Equal([]byte(contentOne)))
+		})
+
+		Specify("Testing appending empty string", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending file data: %s", emptyString)
+			err = alice.AppendToFile(aliceFile, []byte(emptyString))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Appending file data: %s", contentOne)
+			err = alice.AppendToFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+		})
+	})
+
+	Describe("Advanced Tests on Load File", func() {
+		Specify("Testing non-exist file", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Loading file...")
+			_, err := alice.LoadFile(aliceFile)
+			Expect(err).NotTo(BeNil())
+		})
+		Specify("Testing corrupted file structure", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			dataStore := userlib.DatastoreGetMap()
+			var firstSnap map[userlib.UUID][]byte = make(map[userlib.UUID][]byte)
+			for key, element := range dataStore {
+				firstSnap[key] = element
+			}
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Doing bad.")
+			dataStore = userlib.DatastoreGetMap()
+			for key := range dataStore {
+				if _, ok := firstSnap[key]; !ok {
+					dataStore[key] = []byte("I did something bad")
+					break
+				}
+			}
+			_, err := alice.LoadFile(aliceFile)
+			Expect(err).NotTo(BeNil())
+		})
+	})
+
+	Describe("Advanced Tests on Append To File", func() {
+		Specify("Testing non-exist file", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Append to file")
+			err := alice.AppendToFile(aliceFile, []byte(contentOne))
+			Expect(err).NotTo(BeNil())
+		})
+		Specify("Testing corrupted file structure", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			dataStore := userlib.DatastoreGetMap()
+			var firstSnap map[userlib.UUID][]byte = make(map[userlib.UUID][]byte)
+			for key, element := range dataStore {
+				firstSnap[key] = element
+			}
+
+			userlib.DebugMsg("Appending file data: %s", contentOne)
+			err = alice.AppendToFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Doing bad.")
+			dataStore = userlib.DatastoreGetMap()
+			for key := range dataStore {
+				if _, ok := firstSnap[key]; !ok {
+					dataStore[key] = []byte("I did something bad")
+					break
+				}
+			}
+			err := alice.AppendToFile(aliceFile, []byte(contentTwo))
+			Expect(err).NotTo(BeNil())
 		})
 	})
 
