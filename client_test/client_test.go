@@ -83,12 +83,14 @@ var _ = Describe("Client Tests", func() {
 		userlib.DatastoreClear()
 		userlib.KeystoreClear()
 	})
+
 	Describe("Advanced Tests on username and password", func() {
 		Specify("Advanced Test: Testing InitUser with empty username.", func() {
 			userlib.DebugMsg("Initializing user with empty username.")
 			alice, err = client.InitUser(emptyString, defaultPassword)
 			Expect(err).NotTo(BeNil())
 		})
+
 		Specify("Advanced Test: Testing InitUser with duplicate username.", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -97,7 +99,8 @@ var _ = Describe("Client Tests", func() {
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).NotTo(BeNil())
 		})
-		Specify("Advanced Test: Testing InitUsser with empty password.", func() {
+
+		Specify("Advanced Test: Testing InitUser with empty password.", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", emptyString)
 			Expect(err).To(BeNil())
@@ -133,7 +136,8 @@ var _ = Describe("Client Tests", func() {
 			err = alice.StoreFile(emptyString, []byte(contentOne))
 			Expect(err).To(BeNil())
 		})
-		Specify("Advanced Test: Testing same file name for diffrent user", func() {
+
+		Specify("Advanced Test: Testing same file name for different user", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -178,7 +182,8 @@ var _ = Describe("Client Tests", func() {
 			}
 			Expect(flag).To(Equal(false))
 		})
-		Specify("Testing integriy", func() {
+
+		Specify("Testing integrity", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
@@ -189,11 +194,11 @@ var _ = Describe("Client Tests", func() {
 
 			userlib.DebugMsg("Doing bad.")
 			dataStore := userlib.DatastoreGetMap()
-			for key, _ := range dataStore {
+			for key := range dataStore {
 				dataStore[key] = []byte("I did something bad.")
 			}
 			userlib.DebugMsg("Loading file...")
-			alice.LoadFile(aliceFile)
+			_, err := alice.LoadFile(aliceFile)
 			Expect(err).NotTo(BeNil())
 		})
 	})

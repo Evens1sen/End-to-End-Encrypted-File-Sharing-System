@@ -288,7 +288,7 @@ func (userdata *User) getMetaDataAndKeyFromJSON(dtojson []byte, fileMetaData *Fi
 func InitUser(username string, password string) (userdataptr *User, err error) {
 	//check empty username
 	if username == "" {
-		return nil, errors.New("No empty username allowed.")
+		return nil, errors.New("no empty username allowed")
 	}
 	//check unique username
 	var UUID userlib.UUID
@@ -298,7 +298,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	}
 	_, ok := userlib.DatastoreGet(UUID)
 	if ok {
-		return nil, errors.New("Duplicate username not allowed.")
+		return nil, errors.New("duplicate username not allowed")
 	}
 	//ordinary process
 	var userdata User
