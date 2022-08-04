@@ -104,20 +104,7 @@ var _ = Describe("Client Tests", func() {
 			alice, err = client.InitUser("alice", emptyString)
 			Expect(err).To(BeNil())
 		})
-		Specify("Advanced Test: Testing uninitialized user.", func() {
-			userlib.DebugMsg("Getting user Alice.")
-			alice, err = client.GetUser("alice", defaultPassword)
-			Expect(err).NotTo(BeNil())
-		})
-		Specify("Advanced Test: Testing incorrect password.", func() {
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", defaultPassword)
-			Expect(err).To(BeNil())
-
-			userlib.DebugMsg("Getting user Alice.")
-			alice, err = client.GetUser("alice", "Incorrect password")
-			Expect(err).NotTo(BeNil())
-		})
+		
 		Specify("Advanced Test: Testing corrupted userstruct", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
