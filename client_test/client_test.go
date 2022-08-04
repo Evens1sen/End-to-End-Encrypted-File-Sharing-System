@@ -309,6 +309,148 @@ var _ = Describe("Client Tests", func() {
 		})
 	})
 
+	Describe("Advanced Tests on create invitation", func() {
+		Specify("filename does not exist", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			_, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("recipient user does not exist", func() {
+			userlib.DebugMsg("Initializing users Alice and  Bob")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+			userlib.DebugMsg("Alice creating invite for Bob for file %s, and Bob accepting invite under name %s.", aliceFile, bobFile)
+			_, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+
+		Specify("malicious action detected", func() {
+			userlib.DebugMsg("Initializing user Alice and bob.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			dataStore := userlib.DatastoreGetMap()
+			var firstSnap map[userlib.UUID][]byte = make(map[userlib.UUID][]byte)
+			for key, element := range dataStore {
+				firstSnap[key] = element
+			}
+
+			userlib.DebugMsg("Storing file data: %s", contentOne)
+			err = alice.StoreFile(aliceFile, []byte(contentOne))
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Doing bad.")
+			dataStore = userlib.DatastoreGetMap()
+			var finalIndex userlib.UUID
+			for key := range dataStore {
+				if _, ok := firstSnap[key]; !ok {
+					finalIndex = key
+				}
+			}
+			dataStore[finalIndex] = []byte("I did something bad")
+			_, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).NotTo(BeNil())
+		})
+	})
+
+	Describe("Advanced Tests on accept invitation", func() {
+		Specify("duplicate file name", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s, and Bob accepting invite under name %s.", aliceFile, bobFile)
+
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Bob storing file %s with content: %s", bobFile, contentOne)
+			bob.StoreFile(bobFile, []byte(contentOne))
+
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).ToNot(BeNil())
+		})
+		Specify("unable to verify invitation authenticity", func() {
+
+		})
+		Specify("invitation no longer valid", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s, and Bob accepting invite under name %s.", aliceFile, bobFile)
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			err = bob.AcceptInvitation("alice", invite, bobFile)
+			Expect(err).ToNot(BeNil())
+		})
+		Specify("unable to verify invitation integrity", func() {
+
+		})
+	})
+
+	Describe("Advanced Tests on revoke access", func() {
+		Specify("file name does not exist", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+		Specify("file not shared with recipient", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
+			err = alice.RevokeAccess(aliceFile, "bob")
+			Expect(err).ToNot(BeNil())
+		})
+		Specify("malicious action detected", func() {
+
+		})
+	})
+
 	Describe("Advanced Tests on file confidentiality and integrity", func() {
 		Specify("Testing confidentiality", func() {
 			userlib.DebugMsg("Initializing user Alice.")
