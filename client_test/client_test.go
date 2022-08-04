@@ -83,7 +83,7 @@ var _ = Describe("Client Tests", func() {
 		userlib.KeystoreClear()
 	})
 
-	Describe("Advanced Tests on username and password", func() {
+	Describe("Advanced Tests on user", func() {
 		Specify("Advanced Test: Testing InitUser with empty username.", func() {
 			userlib.DebugMsg("Initializing user with empty username.")
 			alice, err = client.InitUser(emptyString, defaultPassword)
@@ -99,12 +99,6 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).NotTo(BeNil())
 		})
 
-		Specify("Advanced Test: Testing InitUser with empty password.", func() {
-			userlib.DebugMsg("Initializing user Alice.")
-			alice, err = client.InitUser("alice", emptyString)
-			Expect(err).To(BeNil())
-		})
-		
 		Specify("Advanced Test: Testing corrupted userstruct", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -112,7 +106,7 @@ var _ = Describe("Client Tests", func() {
 
 			userlib.DebugMsg("Doing bad.")
 			dataStore := userlib.DatastoreGetMap()
-			for key, _ := range dataStore {
+			for key := range dataStore {
 				dataStore[key] = []byte("I did something bad.")
 			}
 
@@ -230,7 +224,7 @@ var _ = Describe("Client Tests", func() {
 			alice, err = client.InitUser("alice", defaultPassword)
 			Expect(err).To(BeNil())
 			dataStore := userlib.DatastoreGetMap()
-			var firstSnap map[userlib.UUID][]byte = make(map[userlib.UUID][]byte)
+			var firstSnap = make(map[userlib.UUID][]byte)
 			for key, element := range dataStore {
 				firstSnap[key] = element
 			}
@@ -243,7 +237,7 @@ var _ = Describe("Client Tests", func() {
 			dataStore = userlib.DatastoreGetMap()
 			for key := range dataStore {
 				if _, ok := firstSnap[key]; !ok {
-					dataStore[key] = []byte("I did something bad")
+					userlib.DatastoreSet(key, []byte("I did something bad"))
 					break
 				}
 			}
@@ -273,7 +267,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 
 			dataStore := userlib.DatastoreGetMap()
-			var firstSnap map[userlib.UUID][]byte = make(map[userlib.UUID][]byte)
+			var firstSnap = make(map[userlib.UUID][]byte)
 			for key, element := range dataStore {
 				firstSnap[key] = element
 			}
@@ -374,9 +368,27 @@ var _ = Describe("Client Tests", func() {
 			err = bob.AcceptInvitation("alice", invite, bobFile)
 			Expect(err).ToNot(BeNil())
 		})
-		Specify("unable to verify invitation authenticity", func() {
 
+		Specify("unable to verify invitation authenticity", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s, and Bob accepting invite under name %s.", aliceFile, bobFile)
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			err = bob.AcceptInvitation("charles", invite, bobFile)
+			Expect(err).ToNot(BeNil())
 		})
+
 		Specify("invitation no longer valid", func() {
 			userlib.DebugMsg("Initializing users Alice and Bob")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -399,8 +411,27 @@ var _ = Describe("Client Tests", func() {
 			err = bob.AcceptInvitation("alice", invite, bobFile)
 			Expect(err).ToNot(BeNil())
 		})
-		Specify("unable to verify invitation integrity", func() {
 
+		Specify("unable to verify invitation integrity", func() {
+			userlib.DebugMsg("Initializing users Alice and Bob")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+			bob, err = client.InitUser("bob", defaultPassword)
+			Expect(err).To(BeNil())
+			charles, err = client.InitUser("charles", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Alice storing file %s with content: %s", aliceFile, contentOne)
+			alice.StoreFile(aliceFile, []byte(contentOne))
+
+			userlib.DebugMsg("Alice creating invite for Bob for file %s, and Bob accepting invite under name %s.", aliceFile, bobFile)
+			invite, err := alice.CreateInvitation(aliceFile, "bob")
+			Expect(err).To(BeNil())
+
+			userlib.DatastoreSet(invite, []byte("Invitation been modified"))
+
+			err = bob.AcceptInvitation("charles", invite, bobFile)
+			Expect(err).ToNot(BeNil())
 		})
 	})
 
@@ -417,6 +448,7 @@ var _ = Describe("Client Tests", func() {
 			err = alice.RevokeAccess(aliceFile, "bob")
 			Expect(err).ToNot(BeNil())
 		})
+
 		Specify("file not shared with recipient", func() {
 			userlib.DebugMsg("Initializing users Alice and Bob")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -432,6 +464,7 @@ var _ = Describe("Client Tests", func() {
 			err = alice.RevokeAccess(aliceFile, "bob")
 			Expect(err).ToNot(BeNil())
 		})
+
 		Specify("malicious action detected", func() {
 
 		})
