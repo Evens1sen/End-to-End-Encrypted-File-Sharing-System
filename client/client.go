@@ -290,9 +290,10 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if username == "" {
 		return nil, errors.New("no empty username allowed")
 	}
+
 	//check unique username
 	var UUID userlib.UUID
-	UUID, err = getUUID(username)
+	UUID, err = getUUID("user" + username)
 	if err != nil {
 		return nil, err
 	}
@@ -300,6 +301,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 	if ok {
 		return nil, errors.New("duplicate username not allowed")
 	}
+
 	//ordinary process
 	var userdata User
 	userdata.Username = username
@@ -346,7 +348,7 @@ func InitUser(username string, password string) (userdataptr *User, err error) {
 func GetUser(username string, password string) (userdataptr *User, err error) {
 	// get dtojson
 	var UUID userlib.UUID
-	UUID, err = getUUID(username)
+	UUID, err = getUUID("user" + username)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +356,7 @@ func GetUser(username string, password string) (userdataptr *User, err error) {
 	if !ok {
 		return nil, errors.New("no corresponding user found")
 	}
-	//get EK and unmarshal dtojson to userjson
+	//get EK and unmarshal dtojson to user json
 	EK := userlib.Argon2Key([]byte(password), []byte(username), keysize)
 	var userdata User
 	err = dtoUnwrap(EK, "mac_user", dtojson, &userdata)
