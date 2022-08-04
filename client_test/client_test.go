@@ -276,6 +276,7 @@ var _ = Describe("Client Tests", func() {
 			err := alice.AppendToFile(aliceFile, []byte(contentOne))
 			Expect(err).NotTo(BeNil())
 		})
+
 		Specify("Testing corrupted file structure", func() {
 			userlib.DebugMsg("Initializing user Alice.")
 			alice, err = client.InitUser("alice", defaultPassword)
@@ -299,7 +300,7 @@ var _ = Describe("Client Tests", func() {
 			dataStore = userlib.DatastoreGetMap()
 			for key := range dataStore {
 				if _, ok := firstSnap[key]; !ok {
-					dataStore[key] = []byte("I did something bad")
+					userlib.DatastoreSet(key, []byte("I did something bad"))
 					break
 				}
 			}
