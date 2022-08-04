@@ -322,7 +322,7 @@ var _ = Describe("Client Tests", func() {
 			Expect(err).To(BeNil())
 
 			dataStore := userlib.DatastoreGetMap()
-			var firstSnap map[userlib.UUID][]byte = make(map[userlib.UUID][]byte)
+			var firstSnap = make(map[userlib.UUID][]byte)
 			for key, element := range dataStore {
 				firstSnap[key] = element
 			}
@@ -463,10 +463,6 @@ var _ = Describe("Client Tests", func() {
 			userlib.DebugMsg("Alice revoking Bob's access from %s.", aliceFile)
 			err = alice.RevokeAccess(aliceFile, "bob")
 			Expect(err).ToNot(BeNil())
-		})
-
-		Specify("malicious action detected", func() {
-
 		})
 	})
 

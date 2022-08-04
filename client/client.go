@@ -594,11 +594,22 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 	// Retrive the fileMetaData
 	fileMetaDataUUID, err := getUUID(userdata.Username + filename)
 	if err != nil {
-		return uuid.Nil, errors.New("you don't have this file")
+		return uuid.Nil, err
 	}
 
 	FileMetaDataJson, ok := userlib.DatastoreGet(fileMetaDataUUID)
 	if !ok {
+		return uuid.Nil, errors.New("you don't have this file")
+	}
+
+	recipientUUID, err := getUUID("user" + recipientUsername)
+	_, ok = userlib.DatastoreGet(recipientUUID)
+	if !ok {
+		return uuid.Nil, errors.New("recipient user does not exist")
+	}
+
+	_, err = userdata.LoadFile(filename)
+	if err != nil {
 		return uuid.Nil, err
 	}
 
@@ -706,6 +717,11 @@ func (userdata *User) CreateInvitation(filename string, recipientUsername string
 }
 
 func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid.UUID, filename string) error {
+	_, err := userdata.LoadFile(filename)
+	if err == nil {
+		return errors.New("have file with same name")
+	}
+
 	// Get the invitation information
 	invitationDTOJson, ok := userlib.DatastoreGet(invitationPtr)
 	if !ok {
@@ -713,7 +729,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	}
 
 	var invitationDTO DTO
-	err := json.Unmarshal(invitationDTOJson, &invitationDTO)
+	err = json.Unmarshal(invitationDTOJson, &invitationDTO)
 	if err != nil {
 		return err
 	}
@@ -778,6 +794,20 @@ func (userdata *User) RevokeAccess(filename string, recipientUsername string) er
 	if !fileMetaData.Original {
 		return errors.New("cannot revoke the shared file")
 	}
+
+	_, isShared := fileMetaData.ChildrenKeyPtrMap[recipientUsername]
+	if !isShared {
+		return errors.New("file is not currently shared with recipientUsername")
+	}
+
+	// Delete the invitation and invitation body for the revoked user
+	invitationUUID, err := getUUID(userdata.Username + recipientUsername + filename)
+	invitationBodyPtr, err := getUUID(userdata.Username + recipientUsername + filename + "body")
+	if err != nil {
+		return err
+	}
+	userlib.DatastoreDelete(invitationUUID)
+	userlib.DatastoreDelete(invitationBodyPtr)
 
 	// Step1: Update the FileKey for users except the revoked user
 	// Optional: Delete the FileMetaData in the revoked user's namespace (Maybe done elsewhere)
