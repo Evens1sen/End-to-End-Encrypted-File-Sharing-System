@@ -766,7 +766,7 @@ func (userdata *User) AcceptInvitation(senderUsername string, invitationPtr uuid
 	fileMetaData.Original = false
 	fileMetaData.FileUUID = invitationBody.FileUUID
 	fileMetaData.FileKeyPtr = invitationBody.FileKeyPtr
-	fileMetaData.ChildrenKeyPtrMap = nil
+	fileMetaData.ChildrenKeyPtrMap = make(map[string]userlib.UUID)
 	fileMetaData.SourceKey = invitationBody.SourceKey
 
 	_, err = structWrapAndStoreWithHashKDF(fileMetaData, userdata.UserEK, "encrypt_file_meta", "mac_file_meta", userdata.Username+filename)
