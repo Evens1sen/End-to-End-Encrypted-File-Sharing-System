@@ -102,6 +102,35 @@ var _ = Describe("Client Tests", func() {
 			alice, err = client.InitUser("alice", emptyString)
 			Expect(err).To(BeNil())
 		})
+		Specify("Advanced Test: Testing uninitialized user.", func() {
+			userlib.DebugMsg("Getting user Alice.")
+			alice, err = client.GetUser("alice", defaultPassword)
+			Expect(err).NotTo(BeNil())
+		})
+		Specify("Advanced Test: Testing incorrect password.", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Getting user Alice.")
+			alice, err = client.GetUser("alice", "Incorrect password")
+			Expect(err).NotTo(BeNil())
+		})
+		Specify("Advanced Test: Testing corrupted userstruct", func() {
+			userlib.DebugMsg("Initializing user Alice.")
+			alice, err = client.InitUser("alice", defaultPassword)
+			Expect(err).To(BeNil())
+
+			userlib.DebugMsg("Doing bad.")
+			dataStore := userlib.DatastoreGetMap()
+			for key, _ := range dataStore {
+				dataStore[key] = []byte("I did something bad.")
+			}
+
+			userlib.DebugMsg("Getting user Alice.")
+			alice, err = client.GetUser("alice", defaultPassword)
+			Expect(err).NotTo(BeNil())
+		})
 	})
 
 	Describe("Advanced Tests on key reuse", func() {
